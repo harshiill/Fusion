@@ -31,7 +31,6 @@ from .services import (
     add_doctor,
     add_medicine,
     add_pathologist,
-    add_prescribed_medicine,
     add_stock,
     cancel_ambulance_request,
     cancel_appointment,
@@ -591,7 +590,7 @@ def add_prescribed_medicine_api(request):
     if not result["success"]:
         return Response(result, status=status.HTTP_400_BAD_REQUEST)
 
-    prescribed = add_prescribed_medicine(serializer.validated_data)
+    prescribed = result["prescribed_medicine"]
     return Response(AllPrescribedMedicineSerializer(prescribed).data, status=status.HTTP_201_CREATED)
 
 

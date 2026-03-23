@@ -41,7 +41,7 @@ def reset_counter():
 def prescribe_medicine(medicine_id, quantity, prescription_id):
     """
     Handles medicine allocation using expiry-based FIFO logic.
-    Returns: {success: bool, message: str, remaining_stock: int}
+    Returns: {success: bool, message: str, remaining_stock: int, prescribed_medicine: All_Prescribed_medicine | None}
     """
     medicine = All_Medicine.objects.get(pk=medicine_id)
     prescription = All_Prescription.objects.get(pk=prescription_id)
@@ -71,7 +71,7 @@ def prescribe_medicine(medicine_id, quantity, prescription_id):
         stock.save(update_fields=["quantity"])
         requested_qty -= consumed
 
-    All_Prescribed_medicine.objects.create(
+    prescribed_medicine = All_Prescribed_medicine.objects.create(
         prescription_id=prescription,
         medicine_id=medicine,
         stock=first_stock,
@@ -103,6 +103,7 @@ def prescribe_medicine(medicine_id, quantity, prescription_id):
         "success": True,
         "message": "Medicine prescribed successfully",
         "remaining_stock": remaining_stock,
+        "prescribed_medicine": prescribed_medicine,
     }
 
 
