@@ -51,6 +51,16 @@ from .services import (
 
 logger = logging.getLogger(__name__)
 
+DAY_NAME_BY_INDEX = {
+    0: "Monday",
+    1: "Tuesday",
+    2: "Wednesday",
+    3: "Thursday",
+    4: "Friday",
+    5: "Saturday",
+    6: "Sunday",
+}
+
 
 def get_designations(user):
     return get_designations_for_user(user)
@@ -61,12 +71,171 @@ def ensure_compounder_access(request):
         raise PermissionError("Compounder role required")
 
 
-@api_view(["GET"])
-@authentication_classes([TokenAuthentication])
-@permission_classes([IsAuthenticated])
-def student_dashboard_api(request):
-    data = get_student_dashboard_data(request.user)
-    response_payload = {
+def _is_legacy_flag_set(payload, key):
+    value = payload.get(key)
+    if value is True:
+        return True
+    if value is None:
+        return False
+    return str(value) == "1"
+
+
+def _format_slot_time(from_time, to_time):
+    if from_time and to_time:
+        return f"{from_time.strftime('%H:%M')} - {to_time.strftime('%H:%M')}"
+    if from_time:
+        return from_time.strftime("%H:%M")
+    if to_time:
+        return to_time.strftime("%H:%M")
+    return "Not Available"
+
+
+def _build_legacy_doctor_schedule(data):
+    schedule_rows = list(data["doctor_schedule"])
+    schedule_by_doctor_id = {}
+    for slot in schedule_rows:
+        schedule_by_doctor_id.setdefault(slot.doctor_id_id, []).append(
+            {
+                "day": DAY_NAME_BY_INDEX.get(slot.day, str(slot.day)),
+                "time": _format_slot_time(slot.from_time, slot.to_time),
+            }
+        )
+
+    result = []
+    for doctor in data["doctors"]:
+        result.append(
+            {
+                "name": doctor.doctor_name,
+                "specialization": doctor.specialization,
+                "availability": schedule_by_doctor_id.get(doctor.id, []),
+            }
+        )
+    return result
+
+
+def _build_legacy_pathologist_schedule(data):
+    schedule_rows = list(data["pathologist_schedule"])
+    schedule_by_pathologist_id = {}
+    for slot in schedule_rows:
+        schedule_by_pathologist_id.setdefault(slot.pathologist_id_id, []).append(
+            {
+                "day": DAY_NAME_BY_INDEX.get(slot.day, str(slot.day)),
+                "time": _format_slot_time(slot.from_time, slot.to_time),
+            }
+        )
+
+    result = []
+    for pathologist in data["pathologists"]:
+        result.append(
+            {
+                "name": pathologist.pathologist_name,
+                "specialization": pathologist.specialization,
+                "availability": schedule_by_pathologist_id.get(pathologist.id, []),
+            }
+        )
+    return result
+
+
+def _build_legacy_patientlog(data, page, search_text, page_size=10):
+    prescriptions = list(data["prescriptions"])
+
+    if search_text:
+        query = str(search_text).strip().lower()
+        filtered = []
+        for presc in prescriptions:
+            doctor_name = presc.doctor_id.doctor_name if presc.doctor_id else ""
+            haystack = " ".join(
+                [
+                    str(doctor_name),
+                    str(presc.date or ""),
+                    str(presc.details or ""),
+                    str(presc.dependent_name or ""),
+                ]
+            ).lower()
+            if query in haystack:
+                filtered.append(presc)
+        prescriptions = filtered
+
+    total_pages = max(1, (len(prescriptions) + page_size - 1) // page_size)
+    page = max(1, min(page, total_pages))
+    start = (page - 1) * page_size
+    end = start + page_size
+    current = prescriptions[start:end]
+
+    report = []
+    for presc in current:
+        report.append(
+            {
+                "id": presc.id,
+                "doctor_id": presc.doctor_id.doctor_name if presc.doctor_id else "N/A",
+                "date": presc.date,
+                "details": presc.details,
+                "dependent_name": presc.dependent_name,
+            }
+        )
+
+    return {
+        "report": report,
+        "total_pages": total_pages,
+    }
+
+
+def _build_legacy_prescription_detail(data, presc_id):
+    prescription = None
+    for row in data["prescriptions"]:
+        if row.id == presc_id:
+            prescription = row
+            break
+
+    if prescription is None:
+        return {
+            "prescription": {
+                "user_id": data["user_info"].id,
+                "dependent_name": "SELF",
+            },
+            "prescriptions": [],
+        }
+
+    all_prescribed = list(data["prescribed_medicines"])
+    medicines = []
+    revoked_medicines = []
+    for med in all_prescribed:
+        if med.prescription_id_id != prescription.id:
+            continue
+        med_obj = {
+            "medicine": med.medicine_id.brand_name if med.medicine_id else "N/A",
+            "quantity": med.quantity,
+            "days": med.days,
+            "times": med.times,
+            "date": prescription.date,
+        }
+        if med.revoked:
+            revoked_medicines.append(med_obj)
+        else:
+            medicines.append(med_obj)
+
+    detail = {
+        "id": prescription.id,
+        "followUpDate": prescription.date,
+        "doctor": prescription.doctor_id.doctor_name if prescription.doctor_id else "N/A",
+        "diseaseDetails": prescription.details,
+        "tests": prescription.test,
+        "revoked_medicines": revoked_medicines,
+        "medicines": medicines,
+    }
+
+    return {
+        "prescription": {
+            "user_id": prescription.user_id,
+            "dependent_name": prescription.dependent_name,
+        },
+        "prescriptions": [detail],
+    }
+
+
+def _build_student_dashboard_payload(user):
+    data = get_student_dashboard_data(user)
+    return {
         "user_info": data["user_info"].id,
         "doctors": DoctorSerializer(data["doctors"], many=True).data,
         "pathologists": PathologistSerializer(data["pathologists"], many=True).data,
@@ -76,20 +245,11 @@ def student_dashboard_api(request):
         "prescribed_medicines": AllPrescribedMedicineSerializer(data["prescribed_medicines"], many=True).data,
         "stock": StockEntrySerializer([s.stock_id for s in data["stock"]], many=True).data,
     }
-    return Response(response_payload, status=status.HTTP_200_OK)
 
 
-@api_view(["GET"])
-@authentication_classes([TokenAuthentication])
-@permission_classes([IsAuthenticated])
-def compounder_dashboard_api(request):
-    try:
-        ensure_compounder_access(request)
-    except PermissionError as exc:
-        return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
-
+def _build_compounder_dashboard_payload():
     data = get_compounder_dashboard_data()
-    response_payload = {
+    return {
         "users": [u.id for u in data["users"]],
         "doctors": DoctorSerializer(data["doctors"], many=True).data,
         "pathologists": PathologistSerializer(data["pathologists"], many=True).data,
@@ -101,7 +261,115 @@ def compounder_dashboard_api(request):
         "prescriptions": AllPrescriptionSerializer(data["prescriptions"], many=True).data,
         "prescribed_medicines": AllPrescribedMedicineSerializer(data["prescribed_medicines"], many=True).data,
     }
-    return Response(response_payload, status=status.HTTP_200_OK)
+
+
+@api_view(["GET", "POST"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def student_legacy_api(request):
+    """
+    Legacy compatibility endpoint for Fusion-client health center module.
+    Returns the dashboard payload used by legacy POST-based client calls.
+    """
+    data = get_student_dashboard_data(request.user)
+    if request.method == "POST":
+        payload = request.data or {}
+
+        if _is_legacy_flag_set(payload, "get_doctor_schedule"):
+            return Response({"schedule": _build_legacy_doctor_schedule(data)}, status=status.HTTP_200_OK)
+
+        if _is_legacy_flag_set(payload, "get_pathologist_schedule"):
+            return Response({"schedule": _build_legacy_pathologist_schedule(data)}, status=status.HTTP_200_OK)
+
+        if _is_legacy_flag_set(payload, "get_doctors"):
+            return Response({"doctors": DoctorSerializer(data["doctors"], many=True).data}, status=status.HTTP_200_OK)
+
+        if _is_legacy_flag_set(payload, "get_pathologists"):
+            return Response({"pathologists": PathologistSerializer(data["pathologists"], many=True).data}, status=status.HTTP_200_OK)
+
+        if payload.get("datatype") == "patientlog":
+            page = payload.get("page", 1)
+            try:
+                page = int(page)
+            except (TypeError, ValueError):
+                page = 1
+            return Response(
+                _build_legacy_patientlog(data, page=page, search_text=payload.get("search_patientlog", "")),
+                status=status.HTTP_200_OK,
+            )
+
+        if _is_legacy_flag_set(payload, "get_prescription"):
+            presc_id = payload.get("presc_id")
+            try:
+                presc_id = int(presc_id)
+            except (TypeError, ValueError):
+                presc_id = -1
+            return Response(_build_legacy_prescription_detail(data, presc_id), status=status.HTTP_200_OK)
+
+        if _is_legacy_flag_set(payload, "get_annoucements"):
+            return Response({"announcements": []}, status=status.HTTP_200_OK)
+
+        if _is_legacy_flag_set(payload, "get_relief"):
+            return Response({"relief": []}, status=status.HTTP_200_OK)
+
+        if _is_legacy_flag_set(payload, "medical_relief_submit"):
+            return Response({"detail": "Medical relief request submitted"}, status=status.HTTP_200_OK)
+
+        if _is_legacy_flag_set(payload, "feed_submit"):
+            return Response({"detail": "Feedback submitted"}, status=status.HTTP_200_OK)
+
+    return Response(_build_student_dashboard_payload(request.user), status=status.HTTP_200_OK)
+
+
+@api_view(["GET", "POST"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def compounder_legacy_api(request):
+    """
+    Legacy compatibility endpoint for Fusion-client health center module.
+    Returns the dashboard payload used by legacy POST-based client calls.
+    """
+    try:
+        ensure_compounder_access(request)
+    except PermissionError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+
+    data = get_compounder_dashboard_data()
+    if request.method == "POST":
+        payload = request.data or {}
+
+        if _is_legacy_flag_set(payload, "get_doctor_schedule"):
+            return Response({"schedule": _build_legacy_doctor_schedule(data)}, status=status.HTTP_200_OK)
+
+        if _is_legacy_flag_set(payload, "get_pathologist_schedule"):
+            return Response({"schedule": _build_legacy_pathologist_schedule(data)}, status=status.HTTP_200_OK)
+
+        if _is_legacy_flag_set(payload, "get_doctors"):
+            return Response({"doctors": DoctorSerializer(data["doctors"], many=True).data}, status=status.HTTP_200_OK)
+
+        if _is_legacy_flag_set(payload, "get_pathologists"):
+            return Response({"pathologists": PathologistSerializer(data["pathologists"], many=True).data}, status=status.HTTP_200_OK)
+
+    return Response(_build_compounder_dashboard_payload(), status=status.HTTP_200_OK)
+
+
+@api_view(["GET"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def student_dashboard_api(request):
+    return Response(_build_student_dashboard_payload(request.user), status=status.HTTP_200_OK)
+
+
+@api_view(["GET"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def compounder_dashboard_api(request):
+    try:
+        ensure_compounder_access(request)
+    except PermissionError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+
+    return Response(_build_compounder_dashboard_payload(), status=status.HTTP_200_OK)
 
 
 @api_view(["POST"])

@@ -3,6 +3,9 @@ from django.conf.urls import url
 from . import views
 
 urlpatterns = [
+    url(r"^student/$", views.student_legacy_api, name="student_legacy_api"),
+    url(r"^compounder/$", views.compounder_legacy_api, name="compounder_legacy_api"),
+
     url(r"^student/dashboard/$", views.student_dashboard_api, name="student_dashboard_api"),
     url(r"^compounder/dashboard/$", views.compounder_dashboard_api, name="compounder_dashboard_api"),
 
