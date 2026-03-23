@@ -17,12 +17,7 @@ urlpatterns = [
     url(r'^student/$', student_view, name='student_view'),
     url(r'announcement/', announcement, name='announcement'),
     url(r'medical_profile/', medical_profile, name='medical_profile'),
-    
-    #database entry
-    url(r'^schedule_entry', schedule_entry, name='schedule_entry'),
-    url(r'^doctor_entry', doctor_entry, name='doctor_entry'),
-    url(r'^compounder_entry', compounder_entry, name='compounder_entry'), 
-   
-    # #api
-    # url(r'^api/',include('applications.health_center.api.urls'))
+
+    # api
+    url(r'^api/', include('applications.health_center.api.urls'))
 ]

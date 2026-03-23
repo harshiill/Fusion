@@ -1,4 +1,5 @@
 import json
+import logging
 import pandas as pd
 from django.http import FileResponse,Http404
 from datetime import date, datetime, timedelta, time
@@ -18,10 +19,11 @@ from .models import ( Constants,All_Medicine,All_Prescribed_medicine,All_Prescri
                     Present_Stock,Doctor,Pathologist,
                     Doctors_Schedule,Pathologist_Schedule,Stock_entry,
                     medical_relief,MedicalProfile,Required_medicine,files,Required_tabel_last_updated)
-from .utils import datetime_handler, compounder_view_handler, student_view_handler
 from applications.filetracking.sdk.methods import *
 from django.db.models import Q
 
+
+logger = logging.getLogger(__name__)
 
 
 @login_required
@@ -74,7 +76,7 @@ def compounder_view(request):
     design=request.session['currentDesignationSelected']
     if design == 'Compounder':
         if request.method == 'POST':
-            return compounder_view_handler(request)
+            return JsonResponse({'detail': 'Compounder POST handlers migrated to REST API endpoints.'}, status=410)
 
         else:
             notifs = request.user.notifications.all()           
@@ -170,7 +172,8 @@ def compounder_view(request):
                 obj['supplier']=e.supplier
                 try:
                     qty=Present_Stock.objects.get(stock_id=e).quantity
-                except:
+                except Present_Stock.DoesNotExist as exc:
+                    logger.warning("Present stock not found for expired entry %s: %s", e.id, exc)
                     qty=0
                 obj['quantity']=qty
                 expired.append(obj)
@@ -201,7 +204,8 @@ def compounder_view(request):
                 obj['supplier']=e.supplier
                 try:
                     qty=Present_Stock.objects.get(stock_id=e).quantity
-                except:
+                except Present_Stock.DoesNotExist as exc:
+                    logger.warning("Present stock not found for live entry %s: %s", e.id, exc)
                     qty=0
                 obj['quantity']=qty
                 live_meds.append(obj)
@@ -317,7 +321,7 @@ def student_view(request):
     design=request.session['currentDesignationSelected']
     if design != 'Compounder':
         if request.method == 'POST':
-            return student_view_handler(request)
+            return JsonResponse({'detail': 'Student POST handlers migrated to REST API endpoints.'}, status=410)
 
         else:
             notifs = request.user.notifications.all()
@@ -430,187 +434,6 @@ def student_view(request):
                            'prescription': report, 'schedule': schedule,  'schedule1': schedule1,'users': users, 'curr_date': datetime.now().date(),'holdsDesignations':holdsDesignations,'acc_admin_inbox':acc_ib,'medicalRelief':medicalRelief,'announcements':announcements_data,'medical_profile':mp})
     else:
         return HttpResponseRedirect("/healthcenter/compounder")                                     # student view ends
-
-def schedule_entry(request):
-    '''
-        This function inputs Schedule details into Schedule class in database 
-        @param:
-            request - contains metadata about the requested page
-
-    '''
-    excel = xlrd.open_workbook(os.path.join(os.getcwd(), 'dbinsertscripts/healthcenter/Doctor-Schedule.xlsx'))
-    z = excel.sheet_by_index(0)
-
-    for i in range(1, 19):
-        try:
-            doc_name = str(z.cell(i,0).value)
-            print(doc_name)
-            do=Doctor.objects.filter(doctor_name=doc_name)
-            doc_id = do[0]
-            print(doc_id)
-            day = str(z.cell(i,1).value)
-            days = Constants.DAYS_OF_WEEK
-            for p,d in days:
-                if d==day:
-                    da=p
-            print(da)
-            x=z.cell(i,2).value
-            x=int(x*24*3600)
-            from_time=time(x//3600,(x%3600)//60,x%60)
-            print(from_time)
-            print(from_time)
-            y=z.cell(i,3).value
-            y=int(y*24*3600)
-            to_time=time(y//3600,(y%3600)//60,y%60)
-            print(to_time)
-            room=int(z.cell(i,4).value)
-            u = Schedule.objects.create(
-                        doctor_id = doc_id,
-                        day = da,
-                        from_time=from_time,
-                        to_time=to_time,
-                        room=room,
-                        date=datetime.now()
-            )
-            print("Schedule done -> ")
-        except Exception as e:
-            print(e)
-            print(i)
-            pass
-    return HttpResponse("Hello")
-
-def doctor_entry(request):
-    '''
-        This function inputs new doctors' details into Doctor class in database 
-        @param:
-            request - contains metadata about the requested page
-
-    '''
-    excel = xlrd.open_workbook(os.path.join(os.getcwd(), 'dbinsertscripts/healthcenter/Doctor-List.xlsx'))
-    z = excel.sheet_by_index(0)
-
-    for i in range(1, 5):
-        try:
-            name = str(z.cell(i,0).value)
-            print(name)
-            phone = str(int(z.cell(i,1).value))
-            print(phone)
-            spl = str(z.cell(i,2).value)
-            u = Doctor.objects.create(
-                        doctor_name = name,
-                        doctor_phone = phone,
-                        specialization=spl
-            )
-            print("Doctor done -> ")
-        except Exception as e:
-            print(e)
-            print(i)
-            pass
-    return HttpResponse("Hello")
-
-def pathologist_entry(request):
-    '''
-        This function inputs new pathologist' details into Doctor class in database 
-        @param:
-            request - contains metadata about the requested page
-
-    '''
-    excel = xlrd.open_workbook(os.path.join(os.getcwd(), 'dbinsertscripts/healthcenter/Pathologist-List.xlsx'))
-    z = excel.sheet_by_index(0)
-
-    for i in range(1, 5):
-        try:
-            name = str(z.cell(i,0).value)
-            print(name)
-            phone = str(int(z.cell(i,1).value))
-            print(phone)
-            spl = str(z.cell(i,2).value)
-            u = Pathologist.objects.create(
-                        pathologist_name = name,
-                        pathologist_phone = phone,
-                        specialization=spl
-            )
-            print("Pathologist done -> ")
-        except Exception as e:
-            print(e)
-            print(i)
-            pass
-    return HttpResponse("Hello")
-
-
-def compounder_entry(request):
-    '''
-        This function inputs new compounder details into Doctor class in database 
-        @param:
-            request - contains metadata about the requested page
-
-    '''
-    excel = xlrd.open_workbook(os.path.join(os.getcwd(), 'dbinsertscripts/healthcenter/Compounder-List.xlsx'))
-    z = excel.sheet_by_index(0)
-
-    for i in range(1, 4):
-        try:
-            empid = int(z.cell(i, 0).value)
-            name = str(z.cell(i,1).value)
-            dep = str(z.cell(i,2).value)
-            email = str(z.cell(i,3).value)
-            des = str(z.cell(i,4).value)
-            print(dep,des)
-            at = 0
-            for i in range(0,len(email)):
-                if(email[i]=='@'):
-                    at = i
-                    break
-            username = str(email[0:at])
-            print(username)
-            dd = ""
-            dess = ""
-            try:
-                dd = DepartmentInfo.objects.get(name = dep)
-            except:
-                dd = DepartmentInfo.objects.create(name = dep)
-            try:
-                dess = Designation.objects.get(name = des)
-            except:
-                dess = Designation.objects.create(name = des)
-            name = name.split()
-            last_name = name[len(name)-1]
-            first_name = ""
-            for i in range(0,len(name)-1):
-                first_name += name[i]
-            print(first_name,last_name)
-            u = User.objects.create_user(
-                        username = username,
-                        password = 'hello123',
-                        first_name = first_name,
-                        last_name = last_name,
-                        email = email,
-            )
-            sex = "M"
-            print(str(i)+" user creation done")
-            f = ExtraInfo.objects.create(
-                sex = sex,
-                user = u,
-                id = empid,
-                department = dd,
-                age = 38,
-                about_me = 'Hello I am ' + first_name + last_name,
-                user_type = 'compounder',
-                phone_no = 9999999999
-            )
-            print("extraInfoCreation done -> "+str(i))
-
-            qz = HoldsDesignation.objects.create(
-                user = u,
-                working = u,
-                designation = dess,
-            )
-            print("All done yippe -> " + str(i))
-        except Exception as e:
-            print(e)
-            print(i)
-            pass
-    return HttpResponse("Hello")
 
 @login_required(login_url='/accounts/login')      
 def publish(request):

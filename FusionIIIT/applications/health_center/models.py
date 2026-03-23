@@ -8,27 +8,21 @@ from applications.hr2.models import EmpDependents
 
 # Create your models here.
 
-class Constants:
-    DAYS_OF_WEEK = (
-        (0, 'Monday'),
-        (1, 'Tuesday'),
-        (2, 'Wednesday'),
-        (3, 'Thursday'),
-        (4, 'Friday'),
-        (5, 'Saturday'),
-        (6, 'Sunday')
-    )
-    
-    NAME_OF_DOCTOR = (
-        (0, 'Dr.Sharma'),
-        (1, 'Dr.Vinay'),
+class DayOfWeek(models.IntegerChoices):
+    MONDAY = 0, "Monday"
+    TUESDAY = 1, "Tuesday"
+    WEDNESDAY = 2, "Wednesday"
+    THURSDAY = 3, "Thursday"
+    FRIDAY = 4, "Friday"
+    SATURDAY = 5, "Saturday"
+    SUNDAY = 6, "Sunday"
 
-    )
-    
+
+class Constants:
+    DAYS_OF_WEEK = DayOfWeek.choices
     NAME_OF_PATHOLOGIST = (
         (0, 'Dr.Ajay'),
         (1, 'Dr.Rahul'),
-
     )
 
 class Doctor(models.Model):
@@ -98,7 +92,7 @@ class Present_Stock(models.Model):
 class Doctors_Schedule(models.Model):
     doctor_id = models.ForeignKey(Doctor,on_delete=models.CASCADE)
     # pathologist_id = models.ForeignKey(Pathologist,on_delete=models.CASCADE, default=0)
-    day = models.CharField(choices=Constants.DAYS_OF_WEEK, max_length=10)
+    day = models.IntegerField(choices=DayOfWeek.choices)
     from_time = models.TimeField(null=True,blank=True)  
     to_time = models.TimeField(null=True,blank=True)
     room = models.IntegerField()
@@ -107,7 +101,7 @@ class Doctors_Schedule(models.Model):
 class Pathologist_Schedule(models.Model):
     # doctor_id = models.ForeignKey(Doctor,on_delete=models.CASCADE)
     pathologist_id = models.ForeignKey(Pathologist,on_delete=models.CASCADE)
-    day = models.CharField(choices=Constants.DAYS_OF_WEEK, max_length=10)
+    day = models.IntegerField(choices=DayOfWeek.choices)
     from_time = models.TimeField(null=True,blank=True)
     to_time = models.TimeField(null=True,blank=True)
     room = models.IntegerField()
