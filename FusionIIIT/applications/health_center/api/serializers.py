@@ -119,8 +119,23 @@ class AllPrescriptionSerializer(serializers.ModelSerializer):
             "is_dependent",
             "dependent_name",
             "dependent_relation",
+            "follow_up_of",
         ]
         read_only_fields = ["id"]
+
+    def validate(self, data):
+        if data.get("is_dependent"):
+            dependent_name = (data.get("dependent_name") or "").strip()
+            dependent_relation = (data.get("dependent_relation") or "").strip()
+            if not dependent_name or dependent_name.upper() == "SELF":
+                raise serializers.ValidationError(
+                    {"dependent_name": "Required when is_dependent is true."}
+                )
+            if not dependent_relation or dependent_relation.upper() == "SELF":
+                raise serializers.ValidationError(
+                    {"dependent_relation": "Required when is_dependent is true."}
+                )
+        return data
 
 
 class AllPrescribedMedicineSerializer(serializers.ModelSerializer):

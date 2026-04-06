@@ -1,4 +1,5 @@
 import logging
+from collections import defaultdict
 
 from django.http import Http404
 from rest_framework import status
@@ -47,6 +48,7 @@ from .services import (
     upsert_doctor_schedule,
     upsert_pathologist_schedule,
 )
+from ..models import All_Prescription, Doctors_Schedule, Required_medicine, Present_Stock
 
 logger = logging.getLogger(__name__)
 
@@ -563,15 +565,45 @@ def add_stock_api(request):
     return Response(StockEntrySerializer(stock_entry).data, status=status.HTTP_201_CREATED)
 
 
-@api_view(["POST"])
+@api_view(["GET", "POST"])
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
 def submit_prescription_api(request):
+    if request.method == "GET":
+        try:
+            ensure_compounder_access(request)
+            queryset = All_Prescription.objects.select_related("doctor_id", "follow_up_of").all().order_by("-date", "-id")
+        except PermissionError:
+            queryset = All_Prescription.objects.select_related("doctor_id", "follow_up_of").filter(
+                user_id=request.user.username
+            ).order_by("-date", "-id")
+        return Response(AllPrescriptionSerializer(queryset, many=True).data, status=status.HTTP_200_OK)
+
     ensure_compounder_access(request)
     serializer = AllPrescriptionSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     prescription = submit_prescription(serializer.validated_data)
     return Response(AllPrescriptionSerializer(prescription).data, status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def prescription_followup_api(request, prescription_id):
+    ensure_compounder_access(request)
+    try:
+        original = All_Prescription.objects.get(pk=prescription_id)
+    except All_Prescription.DoesNotExist:
+        return Response({"error": "Original prescription not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    payload = request.data.copy()
+    payload["follow_up_of"] = original.id
+    payload["user_id"] = original.user_id
+
+    serializer = AllPrescriptionSerializer(data=payload)
+    serializer.is_valid(raise_exception=True)
+    follow_up = submit_prescription(serializer.validated_data)
+    return Response(AllPrescriptionSerializer(follow_up).data, status=status.HTTP_201_CREATED)
 
 
 @api_view(["POST"])
@@ -606,6 +638,64 @@ def respond_complaint_api(request):
     except LookupError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_501_NOT_IMPLEMENTED)
     return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(["PATCH"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def respond_complaint_detail_api(request, complaint_id):
+    ensure_compounder_access(request)
+    feedback = (request.data.get("feedback") or "").strip()
+    if not feedback:
+        return Response({"error": "Feedback cannot be empty."}, status=status.HTTP_400_BAD_REQUEST)
+    if len(feedback) > 100:
+        return Response({"error": "Feedback cannot exceed 100 characters."}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        respond_complaint(complaint_id, feedback)
+    except LookupError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_501_NOT_IMPLEMENTED)
+    return Response({"message": "Feedback submitted.", "complaint_id": complaint_id}, status=status.HTTP_200_OK)
+
+
+@api_view(["GET"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def doctor_schedule_api(request, doctor_id):
+    schedules = (
+        Doctors_Schedule.objects.select_related("doctor_id")
+        .filter(doctor_id_id=doctor_id)
+        .order_by("day", "from_time", "to_time")
+    )
+    return Response(DoctorsScheduleSerializer(schedules, many=True).data, status=status.HTTP_200_OK)
+
+
+@api_view(["GET"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def required_medicines_api(request):
+    stock_by_medicine = defaultdict(int)
+    medicine_map = {}
+
+    for row in Present_Stock.objects.select_related("medicine_id").all():
+        stock_by_medicine[row.medicine_id_id] += row.quantity
+        medicine_map[row.medicine_id_id] = row.medicine_id
+
+    data = []
+    for medicine_id, current_quantity in stock_by_medicine.items():
+        medicine = medicine_map[medicine_id]
+        threshold = medicine.threshold or 0
+        if current_quantity <= threshold:
+            data.append(
+                {
+                    "medicine_id": medicine.id,
+                    "medicine_name": medicine.medicine_name,
+                    "current_quantity": current_quantity,
+                    "threshold": threshold,
+                }
+            )
+
+    return Response(data, status=status.HTTP_200_OK)
 
 
 @api_view(["POST"])

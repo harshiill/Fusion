@@ -118,6 +118,13 @@ class All_Prescription(models.Model):
     is_dependent = models.BooleanField(default=False)
     dependent_name = models.CharField(max_length=30,default="SELF")
     dependent_relation = models.CharField(max_length=20,default="SELF")
+    follow_up_of = models.ForeignKey(
+        'self',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='follow_ups',
+    )
     # appointment = models.ForeignKey(Appointment, on_delete=models.CASCADE,null=True, blank=True)
 
     def __str__(self):

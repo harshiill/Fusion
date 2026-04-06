@@ -15,8 +15,14 @@ urlpatterns = [
     url(r"^appointments/(?P<pk>[0-9]+)/$", views.cancel_appointment_api, name="cancel_appointment_api"),
     url(r"^complaints/$", views.create_complaint_api, name="create_complaint_api"),
     url(r"^complaints/respond/$", views.respond_complaint_api, name="respond_complaint_api"),
+    url(
+        r"^complaints/(?P<complaint_id>[0-9]+)/respond/$",
+        views.respond_complaint_detail_api,
+        name="respond_complaint_detail_api",
+    ),
 
     url(r"^doctors/$", views.add_doctor_api, name="add_doctor_api"),
+    url(r"^doctors/(?P<doctor_id>[0-9]+)/schedule/$", views.doctor_schedule_api, name="doctor_schedule_api"),
     url(r"^doctors/(?P<pk>[0-9]+)/$", views.remove_doctor_api, name="remove_doctor_api"),
     url(r"^pathologists/$", views.add_pathologist_api, name="add_pathologist_api"),
     url(r"^pathologists/(?P<pk>[0-9]+)/$", views.remove_pathologist_api, name="remove_pathologist_api"),
@@ -35,8 +41,14 @@ urlpatterns = [
     ),
 
     url(r"^medicines/$", views.add_medicine_api, name="add_medicine_api"),
+    url(r"^medicines/required/$", views.required_medicines_api, name="required_medicines_api"),
     url(r"^stocks/$", views.add_stock_api, name="add_stock_api"),
     url(r"^prescriptions/$", views.submit_prescription_api, name="submit_prescription_api"),
+    url(
+        r"^prescriptions/(?P<prescription_id>[0-9]+)/followup/$",
+        views.prescription_followup_api,
+        name="prescription_followup_api",
+    ),
     url(r"^prescribed-medicines/$", views.add_prescribed_medicine_api, name="add_prescribed_medicine_api"),
 
     url(r"^hospital-admits/$", views.admit_patient_api, name="admit_patient_api"),

@@ -43,6 +43,19 @@ def prescribe_medicine(medicine_id, quantity, prescription_id):
     Handles medicine allocation using expiry-based FIFO logic.
     Returns: {success: bool, message: str, remaining_stock: int, prescribed_medicine: All_Prescribed_medicine | None}
     """
+    existing_revoked = All_Prescribed_medicine.objects.filter(
+        prescription_id_id=prescription_id,
+        medicine_id_id=medicine_id,
+        revoked=True,
+    ).first()
+    if existing_revoked:
+        return {
+            "success": False,
+            "message": "This medicine has been revoked and cannot be dispensed.",
+            "remaining_stock": 0,
+            "error": "This medicine has been revoked and cannot be dispensed.",
+        }
+
     medicine = All_Medicine.objects.get(pk=medicine_id)
     prescription = All_Prescription.objects.get(pk=prescription_id)
     stocks = list(
@@ -57,6 +70,7 @@ def prescribe_medicine(medicine_id, quantity, prescription_id):
             "success": False,
             "message": "Required medicine is not available",
             "remaining_stock": total_stock,
+            "error": f"Insufficient stock. Available: {total_stock}, Requested: {int(quantity)}",
         }
 
     requested_qty = int(quantity)
@@ -102,8 +116,10 @@ def prescribe_medicine(medicine_id, quantity, prescription_id):
     return {
         "success": True,
         "message": "Medicine prescribed successfully",
+        "dispensed": int(quantity),
         "remaining_stock": remaining_stock,
         "prescribed_medicine": prescribed_medicine,
+        "error": None,
     }
 
 
