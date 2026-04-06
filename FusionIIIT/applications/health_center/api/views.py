@@ -9,9 +9,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from .serializers import (
+    AnnouncementSerializer,
     AllMedicineSerializer,
     AllPrescribedMedicineSerializer,
     AllPrescriptionSerializer,
+    MedicalProfileSerializer,
+    MedicalReliefWorkflowSerializer,
     AmbulanceRequestCreateSerializer,
     AppointmentCreateSerializer,
     ComplaintCreateSerializer,
@@ -49,6 +52,9 @@ from .services import (
     upsert_pathologist_schedule,
 )
 from ..models import All_Prescription, Doctors_Schedule, Required_medicine, Present_Stock
+from applications.globals.models import ExtraInfo
+from django.contrib.auth.models import User
+from ..models import Announcement, MedicalRelief, MedicalProfile, Pathologist_Schedule
 
 logger = logging.getLogger(__name__)
 
@@ -446,10 +452,14 @@ def create_complaint_api(request):
     return Response({"id": complaint.id}, status=status.HTTP_201_CREATED)
 
 
-@api_view(["POST"])
+@api_view(["GET", "POST"])
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
 def add_doctor_api(request):
+    if request.method == "GET":
+        serializer = DoctorSerializer(DoctorSerializer.Meta.model.objects.filter(active=True), many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
     ensure_compounder_access(request)
     serializer = DoctorSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -457,19 +467,35 @@ def add_doctor_api(request):
     return Response(DoctorSerializer(doctor).data, status=status.HTTP_201_CREATED)
 
 
-@api_view(["PATCH"])
+@api_view(["PUT", "PATCH", "DELETE"])
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
 def remove_doctor_api(request, pk):
     ensure_compounder_access(request)
+    try:
+        doctor = DoctorSerializer.Meta.model.objects.get(pk=pk)
+    except DoctorSerializer.Meta.model.DoesNotExist:
+        return Response({"error": "Doctor not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method in ["PUT", "PATCH"]:
+        partial = request.method == "PATCH"
+        serializer = DoctorSerializer(doctor, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
     deactivate_doctor(pk)
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-@api_view(["POST"])
+@api_view(["GET", "POST"])
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
 def add_pathologist_api(request):
+    if request.method == "GET":
+        serializer = PathologistSerializer(PathologistSerializer.Meta.model.objects.filter(active=True), many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
     ensure_compounder_access(request)
     serializer = PathologistSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -484,6 +510,14 @@ def remove_pathologist_api(request, pk):
     ensure_compounder_access(request)
     deactivate_pathologist(pk)
     return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(["GET"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def pathologist_schedule_list_api(request):
+    schedules = Pathologist_Schedule.objects.select_related("pathologist_id").all().order_by("day", "from_time")
+    return Response(PathologistScheduleSerializer(schedules, many=True).data, status=status.HTTP_200_OK)
 
 
 @api_view(["POST"])
@@ -501,6 +535,13 @@ def upsert_doctor_schedule_api(request):
         serializer.validated_data["room"],
     )
     return Response(DoctorsScheduleSerializer(schedule).data, status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def schedule_api(request):
+    return upsert_doctor_schedule_api(request)
 
 
 @api_view(["DELETE"])
@@ -696,6 +737,122 @@ def required_medicines_api(request):
             )
 
     return Response(data, status=status.HTTP_200_OK)
+
+
+@api_view(["GET", "POST"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def announcement_api(request):
+    if request.method == "GET":
+        queryset = Announcement.objects.select_related("created_by", "created_by__user").all().order_by("-ann_date", "-id")
+        return Response(AnnouncementSerializer(queryset, many=True).data, status=status.HTTP_200_OK)
+
+    ensure_compounder_access(request)
+    user_info = ExtraInfo.objects.filter(user=request.user).first()
+    serializer = AnnouncementSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    obj = serializer.save(created_by=user_info)
+    return Response(AnnouncementSerializer(obj).data, status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def medical_relief_api(request):
+    user_info = ExtraInfo.objects.filter(user=request.user).first()
+    payload = request.data.copy()
+    if user_info:
+        payload["user_id"] = user_info.id
+
+    serializer = MedicalReliefWorkflowSerializer(data=payload)
+    serializer.is_valid(raise_exception=True)
+    obj = serializer.save(user_id=user_info)
+    return Response(MedicalReliefWorkflowSerializer(obj).data, status=status.HTTP_201_CREATED)
+
+
+@api_view(["PATCH"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def medical_relief_review_api(request, relief_id):
+    ensure_compounder_access(request)
+    try:
+        relief = MedicalRelief.objects.get(pk=relief_id)
+    except MedicalRelief.DoesNotExist:
+        return Response({"error": "Medical relief request not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    requested_status = (request.data.get("status") or "").strip().upper()
+    allowed = {
+        MedicalRelief.STATUS_PHC_REVIEWED,
+        MedicalRelief.STATUS_ACCOUNTS_REVIEWED,
+        MedicalRelief.STATUS_SANCTIONED,
+        MedicalRelief.STATUS_REJECTED,
+        MedicalRelief.STATUS_PAID,
+    }
+    if requested_status not in allowed:
+        return Response({"error": "Invalid status transition."}, status=status.HTTP_400_BAD_REQUEST)
+
+    reviewer = ExtraInfo.objects.filter(user=request.user).first()
+    relief.status = requested_status
+    relief.reviewed_by = reviewer
+    relief.save(update_fields=["status", "reviewed_by", "updated_at"])
+    return Response(MedicalReliefWorkflowSerializer(relief).data, status=status.HTTP_200_OK)
+
+
+@api_view(["POST", "PUT", "GET"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def medical_profile_api(request):
+    user_info = ExtraInfo.objects.filter(user=request.user).first()
+
+    if request.method == "GET":
+        profile = MedicalProfile.objects.filter(user_id=user_info).first()
+        if not profile:
+            return Response({}, status=status.HTTP_200_OK)
+        return Response(MedicalProfileSerializer(profile).data, status=status.HTTP_200_OK)
+
+    payload = request.data.copy()
+    if user_info:
+        payload["user_id"] = user_info.id
+
+    if request.method == "POST":
+        serializer = MedicalProfileSerializer(data=payload)
+        serializer.is_valid(raise_exception=True)
+        profile = serializer.save(user_id=user_info)
+        return Response(MedicalProfileSerializer(profile).data, status=status.HTTP_201_CREATED)
+
+    profile = MedicalProfile.objects.filter(user_id=user_info).first()
+    if not profile:
+        return Response({"error": "Medical profile not found."}, status=status.HTTP_404_NOT_FOUND)
+    serializer = MedicalProfileSerializer(profile, data=payload, partial=True)
+    serializer.is_valid(raise_exception=True)
+    serializer.save()
+    return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+@api_view(["GET"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def patient_search_api(request):
+    ensure_compounder_access(request)
+    query = (request.GET.get("search") or "").strip()
+    users = User.objects.all().select_related("extrainfo")
+    if query:
+        users = users.filter(username__icontains=query)
+
+    result = []
+    for user in users[:50]:
+        extra = getattr(user, "extrainfo", None)
+        if not extra:
+            continue
+        result.append(
+            {
+                "id": extra.id,
+                "username": user.username,
+                "name": user.get_full_name() or user.username,
+                "user_type": extra.user_type,
+            }
+        )
+    return Response(result, status=status.HTTP_200_OK)
 
 
 @api_view(["POST"])

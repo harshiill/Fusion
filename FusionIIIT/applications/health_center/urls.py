@@ -18,6 +18,7 @@ urlpatterns = [
     url(r'announcement/', announcement, name='announcement'),
     url(r'medical_profile/', medical_profile, name='medical_profile'),
 
-    # api
+    # api (v1 + backward-compatible legacy prefix)
+    url(r'^api/v1/', include('applications.health_center.api.urls')),
     url(r'^api/', include('applications.health_center.api.urls'))
 ]

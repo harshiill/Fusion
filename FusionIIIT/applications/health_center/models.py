@@ -163,6 +163,51 @@ class medical_relief(models.Model):
     file_id=models.IntegerField(default=0)
     compounder_forward_flag = models.BooleanField(default=False)
     acc_admin_forward_flag = models.BooleanField(default=False)
+
+
+class MedicalRelief(models.Model):
+    STATUS_SUBMITTED = "SUBMITTED"
+    STATUS_PHC_REVIEWED = "PHC_REVIEWED"
+    STATUS_ACCOUNTS_REVIEWED = "ACCOUNTS_REVIEWED"
+    STATUS_SANCTIONED = "SANCTIONED"
+    STATUS_REJECTED = "REJECTED"
+    STATUS_PAID = "PAID"
+
+    STATUS_CHOICES = (
+        (STATUS_SUBMITTED, "Submitted"),
+        (STATUS_PHC_REVIEWED, "PHC Reviewed"),
+        (STATUS_ACCOUNTS_REVIEWED, "Accounts Reviewed"),
+        (STATUS_SANCTIONED, "Sanctioned"),
+        (STATUS_REJECTED, "Rejected"),
+        (STATUS_PAID, "Paid"),
+    )
+
+    user_id = models.ForeignKey(ExtraInfo, on_delete=models.CASCADE, related_name="medical_relief_requests")
+    description = models.CharField(max_length=300)
+    file = models.FileField(upload_to="medical_relief/", null=True, blank=True)
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default=STATUS_SUBMITTED)
+    reviewed_by = models.ForeignKey(
+        ExtraInfo,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="medical_relief_reviewed",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"MedicalRelief {self.id} - {self.status}"
+
+
+class Announcement(models.Model):
+    message = models.CharField(max_length=200)
+    ann_date = models.DateField(auto_now_add=True)
+    file = models.FileField(upload_to="announcements/", null=True, blank=True)
+    created_by = models.ForeignKey(ExtraInfo, on_delete=models.SET_NULL, null=True, blank=True)
+
+    def __str__(self):
+        return f"Announcement {self.id} - {self.ann_date}"
     
     
 class MedicalProfile(models.Model):
@@ -186,5 +231,9 @@ class MedicalProfile(models.Model):
     ]
     blood_type = models.CharField(max_length=3, choices=blood_type_choices)
     height = models.DecimalField(max_digits=5, decimal_places=2)  
-    weight = models.DecimalField(max_digits=5, decimal_places=2)  
+    weight = models.DecimalField(max_digits=5, decimal_places=2)
+    blood_group = models.CharField(max_length=5, null=True, blank=True)
+    allergies = models.TextField(null=True, blank=True)
+    chronic_conditions = models.TextField(null=True, blank=True)
+    emergency_contact = models.CharField(max_length=20, null=True, blank=True)
 

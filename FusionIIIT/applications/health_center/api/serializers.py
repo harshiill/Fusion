@@ -3,11 +3,13 @@ from datetime import date
 from rest_framework import serializers
 
 from ..models import (
+    Announcement,
     All_Medicine,
     All_Prescribed_medicine,
     All_Prescription,
     Doctor,
     Doctors_Schedule,
+    MedicalRelief,
     MedicalProfile,
     Pathologist,
     Pathologist_Schedule,
@@ -39,8 +41,8 @@ class PathologistSerializer(serializers.ModelSerializer):
 
     def validate_pathologist_phone(self, value):
         digits = "".join(ch for ch in value if ch.isdigit())
-        if len(digits) != 10:
-            raise serializers.ValidationError("Pathologist phone must contain exactly 10 digits.")
+        if len(digits) < 7 or len(digits) > 15:
+            raise serializers.ValidationError("Pathologist phone must contain 7-15 digits.")
         return value
 
 
@@ -96,12 +98,54 @@ class DoctorsScheduleSerializer(serializers.ModelSerializer):
         fields = ["id", "doctor_id", "day", "from_time", "to_time", "room", "date"]
         read_only_fields = ["id", "date"]
 
+    def validate(self, data):
+        from_time = data.get("from_time")
+        to_time = data.get("to_time")
+        doctor = data.get("doctor_id")
+        day = data.get("day")
+
+        if from_time and to_time and from_time >= to_time:
+            raise serializers.ValidationError({"from_time": "from_time must be earlier than to_time."})
+
+        overlaps = Doctors_Schedule.objects.filter(
+            doctor_id=doctor,
+            day=day,
+            from_time__lt=to_time,
+            to_time__gt=from_time,
+        )
+        if self.instance:
+            overlaps = overlaps.exclude(id=self.instance.id)
+        if overlaps.exists():
+            raise serializers.ValidationError("Schedule conflict for this doctor and day.")
+        return data
+
 
 class PathologistScheduleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Pathologist_Schedule
         fields = ["id", "pathologist_id", "day", "from_time", "to_time", "room", "date"]
         read_only_fields = ["id", "date"]
+
+    def validate(self, data):
+        from_time = data.get("from_time")
+        to_time = data.get("to_time")
+        pathologist = data.get("pathologist_id")
+        day = data.get("day")
+
+        if from_time and to_time and from_time >= to_time:
+            raise serializers.ValidationError({"from_time": "from_time must be earlier than to_time."})
+
+        overlaps = Pathologist_Schedule.objects.filter(
+            pathologist_id=pathologist,
+            day=day,
+            from_time__lt=to_time,
+            to_time__gt=from_time,
+        )
+        if self.instance:
+            overlaps = overlaps.exclude(id=self.instance.id)
+        if overlaps.exists():
+            raise serializers.ValidationError("Schedule conflict for this pathologist and day.")
+        return data
 
 
 class AllPrescriptionSerializer(serializers.ModelSerializer):
@@ -176,6 +220,28 @@ class MedicalReliefSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "file_id", "compounder_forward_flag", "acc_admin_forward_flag"]
 
 
+class MedicalReliefWorkflowSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MedicalRelief
+        fields = ["id", "user_id", "description", "file", "status", "reviewed_by", "created_at", "updated_at"]
+        read_only_fields = ["id", "status", "reviewed_by", "created_at", "updated_at"]
+
+
+class AnnouncementSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Announcement
+        fields = ["id", "message", "ann_date", "file", "created_by"]
+        read_only_fields = ["id", "ann_date", "created_by"]
+
+    def validate_message(self, value):
+        message = (value or "").strip()
+        if not message:
+            raise serializers.ValidationError("Announcement message cannot be empty.")
+        if len(message) > 200:
+            raise serializers.ValidationError("Message cannot exceed 200 characters.")
+        return message
+
+
 class MedicalProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = MedicalProfile
@@ -187,6 +253,10 @@ class MedicalProfileSerializer(serializers.ModelSerializer):
             "blood_type",
             "height",
             "weight",
+            "blood_group",
+            "allergies",
+            "chronic_conditions",
+            "emergency_contact",
         ]
         read_only_fields = ["id"]
 
