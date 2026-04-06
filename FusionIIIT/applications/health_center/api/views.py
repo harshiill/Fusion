@@ -815,6 +815,13 @@ def medical_profile_api(request):
         payload["user_id"] = user_info.id
 
     if request.method == "POST":
+        profile = MedicalProfile.objects.filter(user_id=user_info).first()
+        if profile:
+            serializer = MedicalProfileSerializer(profile, data=payload, partial=True)
+            serializer.is_valid(raise_exception=True)
+            profile = serializer.save()
+            return Response(MedicalProfileSerializer(profile).data, status=status.HTTP_200_OK)
+
         serializer = MedicalProfileSerializer(data=payload)
         serializer.is_valid(raise_exception=True)
         profile = serializer.save(user_id=user_info)

@@ -212,13 +212,13 @@ class Announcement(models.Model):
     
 class MedicalProfile(models.Model):
     user_id = models.ForeignKey(ExtraInfo, on_delete=models.CASCADE, null=True) 
-    date_of_birth = models.DateField()
+    date_of_birth = models.DateField(null=True, blank=True)
     gender_choices = [
         ('M', 'Male'),
         ('F', 'Female'),
         ('O', 'Other'),
     ]
-    gender = models.CharField(max_length=1, choices=gender_choices)
+    gender = models.CharField(max_length=1, choices=gender_choices, null=True, blank=True)
     blood_type_choices = [
         ('A+', 'A+'),
         ('A-', 'A-'),
@@ -229,9 +229,9 @@ class MedicalProfile(models.Model):
         ('O+', 'O+'),
         ('O-', 'O-'),
     ]
-    blood_type = models.CharField(max_length=3, choices=blood_type_choices)
-    height = models.DecimalField(max_digits=5, decimal_places=2)  
-    weight = models.DecimalField(max_digits=5, decimal_places=2)
+    blood_type = models.CharField(max_length=3, choices=blood_type_choices, null=True, blank=True)
+    height = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)  
+    weight = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
     blood_group = models.CharField(max_length=5, null=True, blank=True)
     allergies = models.TextField(null=True, blank=True)
     chronic_conditions = models.TextField(null=True, blank=True)

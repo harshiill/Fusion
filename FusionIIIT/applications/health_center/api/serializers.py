@@ -259,6 +259,17 @@ class MedicalProfileSerializer(serializers.ModelSerializer):
             "emergency_contact",
         ]
         read_only_fields = ["id"]
+        extra_kwargs = {
+            "date_of_birth": {"required": False, "allow_null": True},
+            "gender": {"required": False, "allow_null": True, "allow_blank": True},
+            "blood_type": {"required": False, "allow_null": True, "allow_blank": True},
+            "height": {"required": False, "allow_null": True},
+            "weight": {"required": False, "allow_null": True},
+            "blood_group": {"required": False, "allow_null": True, "allow_blank": True},
+            "allergies": {"required": False, "allow_null": True, "allow_blank": True},
+            "chronic_conditions": {"required": False, "allow_null": True, "allow_blank": True},
+            "emergency_contact": {"required": False, "allow_null": True, "allow_blank": True},
+        }
 
 
 class AmbulanceRequestCreateSerializer(serializers.Serializer):
