@@ -54,7 +54,8 @@ from .services import (
 from ..models import All_Prescription, Doctors_Schedule, Required_medicine, Present_Stock
 from applications.globals.models import ExtraInfo
 from django.contrib.auth.models import User
-from ..models import Announcement, MedicalRelief, MedicalProfile, Pathologist_Schedule
+from ..models import Announcement, MedicalRelief, MedicalProfile, Pathologist_Schedule, medical_relief
+from applications.filetracking.sdk.methods import view_inbox
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +175,7 @@ def _build_legacy_patientlog(data, page, search_text, page_size=10):
         report.append(
             {
                 "id": presc.id,
+                "user_id": presc.user_id,
                 "doctor_id": presc.doctor_id.doctor_name if presc.doctor_id else "N/A",
                 "date": presc.date,
                 "details": presc.details,
@@ -185,6 +187,109 @@ def _build_legacy_patientlog(data, page, search_text, page_size=10):
         "report": report,
         "total_pages": total_pages,
     }
+
+
+def _build_legacy_stock_report(stock_rows, page, search_text, response_key, page_size=10):
+    stock_rows = list(stock_rows)
+
+    if search_text:
+        query = str(search_text).strip().lower()
+        filtered_rows = []
+        for stock in stock_rows:
+            medicine_name = stock.medicine_id.brand_name if stock.medicine_id else ""
+            haystack = " ".join(
+                [
+                    str(medicine_name),
+                    str(stock.supplier or ""),
+                    str(stock.Expiry_date or ""),
+                ]
+            ).lower()
+            if query in haystack:
+                filtered_rows.append(stock)
+        stock_rows = filtered_rows
+
+    total_pages = max(1, (len(stock_rows) + page_size - 1) // page_size)
+    page = max(1, min(page, total_pages))
+    start = (page - 1) * page_size
+    end = start + page_size
+    current = stock_rows[start:end]
+
+    report = []
+    for stock in current:
+        stock_quantity = (
+            Present_Stock.objects.filter(stock_id=stock).values_list("quantity", flat=True).first() or 0
+        )
+        report.append(
+            {
+                "id": stock.id,
+                "medicine_id": stock.medicine_id.brand_name if stock.medicine_id else "N/A",
+                "supplier": stock.supplier,
+                "Expiry_date": stock.Expiry_date,
+                "quantity": stock_quantity,
+            }
+        )
+
+    return {
+        response_key: report,
+        "page_stock_view": page,
+        "page_stock_expired": page,
+        "total_pages_stock_view": total_pages,
+        "total_pages_stock_expired": total_pages,
+        "has_previous": page > 1,
+        "has_next": page < total_pages,
+        "previous_page_number": page - 1 if page > 1 else None,
+        "next_page_number": page + 1 if page < total_pages else None,
+    }
+
+
+def _build_legacy_feedback_payload():
+    # Legacy complaint model may not exist in the current schema.
+    return {"complaints": []}
+
+
+def _build_legacy_relief_payload(username):
+    try:
+        inbox_files = view_inbox(username=username, designation="Compounder", src_module="health_center")
+    except Exception:
+        logger.exception("Unable to fetch compounder inbox for medical relief")
+        return {"relief": []}
+
+    relief_map = {row.file_id: row for row in medical_relief.objects.all()}
+    relief_items = []
+
+    for item in inbox_files:
+        file_id = item.get("id")
+        try:
+            file_id = int(file_id)
+        except (TypeError, ValueError):
+            continue
+
+        relief_row = relief_map.get(file_id)
+        if relief_row is None:
+            continue
+
+        relief_items.append(
+            {
+                "id": file_id,
+                "uploader": item.get("uploader"),
+                "upload_date": item.get("upload_date"),
+                "desc": relief_row.description,
+                "file": f"file-{file_id}",
+                "status": bool(relief_row.compounder_forward_flag),
+                "status1": bool(relief_row.acc_admin_forward_flag),
+                "status2": False,
+            }
+        )
+
+    return {"relief": relief_items}
+
+
+def _build_legacy_relief_application_payload(username, file_id):
+    payload = _build_legacy_relief_payload(username)
+    for item in payload["relief"]:
+        if item["id"] == file_id:
+            return {"inbox": item}
+    return {"inbox": None}
 
 
 def _build_legacy_prescription_detail(data, presc_id):
@@ -356,6 +461,96 @@ def compounder_legacy_api(request):
 
         if _is_legacy_flag_set(payload, "get_pathologists"):
             return Response({"pathologists": PathologistSerializer(data["pathologists"], many=True).data}, status=status.HTTP_200_OK)
+
+        if payload.get("datatype") == "patientlog":
+            page = payload.get("page", 1)
+            try:
+                page = int(page)
+            except (TypeError, ValueError):
+                page = 1
+            return Response(
+                _build_legacy_patientlog(data, page=page, search_text=payload.get("search_patientlog", "")),
+                status=status.HTTP_200_OK,
+            )
+
+        if payload.get("datatype") == "manage_stock_view":
+            page = payload.get("page_stock_view", 1)
+            try:
+                page = int(page)
+            except (TypeError, ValueError):
+                page = 1
+            return Response(
+                _build_legacy_stock_report(
+                    data["live_stock"],
+                    page=page,
+                    search_text=payload.get("search_view_stock", ""),
+                    response_key="report_stock_view",
+                ),
+                status=status.HTTP_200_OK,
+            )
+
+        if payload.get("datatype") == "manage_stock_expired":
+            page = payload.get("page_stock_expired", 1)
+            try:
+                page = int(page)
+            except (TypeError, ValueError):
+                page = 1
+            return Response(
+                _build_legacy_stock_report(
+                    data["expired_stock"],
+                    page=page,
+                    search_text=payload.get("search_view_expired", ""),
+                    response_key="report_stock_expired",
+                ),
+                status=status.HTTP_200_OK,
+            )
+
+        if _is_legacy_flag_set(payload, "get_feedback"):
+            return Response(_build_legacy_feedback_payload(), status=status.HTTP_200_OK)
+
+        if _is_legacy_flag_set(payload, "get_relief"):
+            return Response(_build_legacy_relief_payload(request.user.username), status=status.HTTP_200_OK)
+
+        if _is_legacy_flag_set(payload, "get_application"):
+            file_id = payload.get("aid")
+            try:
+                file_id = int(file_id)
+            except (TypeError, ValueError):
+                file_id = -1
+            return Response(
+                _build_legacy_relief_application_payload(request.user.username, file_id),
+                status=status.HTTP_200_OK,
+            )
+
+        if _is_legacy_flag_set(payload, "compounder_forward"):
+            file_id = payload.get("file_id")
+            try:
+                file_id = int(file_id)
+            except (TypeError, ValueError):
+                return Response({"detail": "Invalid file_id", "status": 0}, status=status.HTTP_400_BAD_REQUEST)
+
+            row = medical_relief.objects.filter(file_id=file_id).first()
+            if row is None:
+                return Response({"detail": "Medical relief request not found", "status": 0}, status=status.HTTP_404_NOT_FOUND)
+
+            row.compounder_forward_flag = True
+            row.save(update_fields=["compounder_forward_flag"])
+            return Response({"detail": "Forwarded", "status": 1}, status=status.HTTP_200_OK)
+
+        if _is_legacy_flag_set(payload, "compounder_reject"):
+            file_id = payload.get("file_id")
+            try:
+                file_id = int(file_id)
+            except (TypeError, ValueError):
+                return Response({"detail": "Invalid file_id", "status": 0}, status=status.HTTP_400_BAD_REQUEST)
+
+            row = medical_relief.objects.filter(file_id=file_id).first()
+            if row is None:
+                return Response({"detail": "Medical relief request not found", "status": 0}, status=status.HTTP_404_NOT_FOUND)
+
+            row.compounder_forward_flag = False
+            row.save(update_fields=["compounder_forward_flag"])
+            return Response({"detail": "Rejected", "status": 1}, status=status.HTTP_200_OK)
 
     return Response(_build_compounder_dashboard_payload(), status=status.HTTP_200_OK)
 
