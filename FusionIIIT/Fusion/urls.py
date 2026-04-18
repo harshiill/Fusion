@@ -1,97 +1,93 @@
-"""Fusion URL Configuration
+"""Fusion URL Configuration."""
 
-The `urlpatterns` list routes URLs to views. For more information please see:
-    https://docs.djangoproject.com/en/1.11/topics/http/urls/
-Examples:
-Function views
-    1. Add an import:  from my_app import views
-    2. Add a URL to urlpatterns:  url(r'^$', views.home, name='home')
-Class-based views
-    1. Add an import:  from other_app.views import Home
-    2. Add a URL to urlpatterns:  url(r'^$', Home.as_view(), name='home')
-Including another URLconf
-    1. Import the include() function: from django.conf.urls import url, include
-    2. Add a URL to urlpatterns:  url(r'^blog/', include('blog.urls'))
-"""
-
-import notifications.urls
-import debug_toolbar
 from django.conf import settings
-from django.conf.urls import include, url
+from django.conf.urls import include
 from django.conf.urls.static import static
 from django.contrib import admin
 from django.contrib.auth import views as auth_views
-from django.urls import path
+from django.urls import path, re_path
 
-from applications.globals.views import RateLimitedPasswordResetView
+IS_TEST_SETTINGS = getattr(settings, 'SETTINGS_MODULE', '').endswith('.test')
 
+if not IS_TEST_SETTINGS:
+    import debug_toolbar
 
-urlpatterns = [
-    url(r'^', include('applications.globals.urls')),
-    url(r'^feeds/', include('applications.feeds.urls')),
-    url(r'^admin/', admin.site.urls),
-    url(r'^academic-procedures/', include('applications.academic_procedures.urls')),
-    url(r'^aims/', include('applications.academic_information.urls')),
-    url(r'^notifications/', include('applications.notifications_extension.urls')),
-    url(r'^estate/', include('applications.estate_module.urls')),
-    url(r'^dep/', include('applications.department.urls')),
-    url(r'^programme_curriculum/',include('applications.programme_curriculum.urls')),
-    url(r'^iwdModuleV2/', include('applications.iwdModuleV2.urls')),
-    url(r'^__debug__/', include(debug_toolbar.urls)),
-    url(r'^research_procedures/', include('applications.research_procedures.urls')),
-    url(r'^accounts/', include('allauth.urls')),
+    from applications.globals.views import RateLimitedPasswordResetView
 
 
-    url(r'^eis/', include('applications.eis.urls')),
-    url(r'^mess/', include('applications.central_mess.urls')),
-    url(r'^complaint/', include('applications.complaint_system.urls')),
-    url(r'^healthcenter/', include('applications.health_center.urls')),
-    url(r'^leave/', include('applications.leave.urls')),
-    url(r'^placement/', include('applications.placement_cell.urls')),
-    url(r'^filetracking/', include('applications.filetracking.urls')),
-    url(r'^spacs/', include('applications.scholarships.urls')),
-    url(r'^visitorhostel/', include('applications.visitor_hostel.urls')),
-    url(r'^office/', include('applications.office_module.urls')),
-    url(r'^finance/', include('applications.finance_accounts.urls')),
-    url(r'^purchase-and-store/', include('applications.ps1.urls')),
-    url(r'^gymkhana/', include('applications.gymkhana.urls')),
-    url(r'^library/', include('applications.library.urls')),
-    url(r'^establishment/', include('applications.establishment.urls')),
-    url(r'^ocms/', include('applications.online_cms.urls')),
-    url(r'^counselling/', include('applications.counselling_cell.urls')),
-    url(r'^hostelmanagement/', include('applications.hostel_management.urls')),
-    url(r'^income-expenditure/', include('applications.income_expenditure.urls')),
-    url(r'^hr2/', include('applications.hr2.urls')),
-    url(r'^recruitment/', include('applications.recruitment.urls')),
-    url(r'^examination/', include('applications.examination.urls')),
-    url(r'^otheracademic/', include('applications.otheracademic.urls')),
+if IS_TEST_SETTINGS:
+    urlpatterns = [
+        re_path(r'^admin/', admin.site.urls),
+        re_path(r'^', include(('applications.globals.test_urls', 'globals'), namespace='globals')),
+        re_path(r'^healthcenter/', include('applications.health_center.urls')),
+    ]
+else:
+    urlpatterns = [
+        re_path(r'^', include('applications.globals.urls')),
+        re_path(r'^feeds/', include('applications.feeds.urls')),
+        re_path(r'^admin/', admin.site.urls),
+        re_path(r'^academic-procedures/', include('applications.academic_procedures.urls')),
+        re_path(r'^aims/', include('applications.academic_information.urls')),
+        re_path(r'^notifications/', include('applications.notifications_extension.urls')),
+        re_path(r'^estate/', include('applications.estate_module.urls')),
+        re_path(r'^dep/', include('applications.department.urls')),
+        re_path(r'^programme_curriculum/',include('applications.programme_curriculum.urls')),
+        re_path(r'^iwdModuleV2/', include('applications.iwdModuleV2.urls')),
+        re_path(r'^__debug__/', include(debug_toolbar.urls)),
+        re_path(r'^research_procedures/', include('applications.research_procedures.urls')),
+        re_path(r'^accounts/', include('allauth.urls')),
 
-    path(
-        'password-reset/',
-        RateLimitedPasswordResetView.as_view(
-            template_name='registration/password_reset_form.html',
+
+        re_path(r'^eis/', include('applications.eis.urls')),
+        re_path(r'^mess/', include('applications.central_mess.urls')),
+        re_path(r'^complaint/', include('applications.complaint_system.urls')),
+        re_path(r'^healthcenter/', include('applications.health_center.urls')),
+        re_path(r'^leave/', include('applications.leave.urls')),
+        re_path(r'^placement/', include('applications.placement_cell.urls')),
+        re_path(r'^filetracking/', include('applications.filetracking.urls')),
+        re_path(r'^spacs/', include('applications.scholarships.urls')),
+        re_path(r'^visitorhostel/', include('applications.visitor_hostel.urls')),
+        re_path(r'^office/', include('applications.office_module.urls')),
+        re_path(r'^finance/', include('applications.finance_accounts.urls')),
+        re_path(r'^purchase-and-store/', include('applications.ps1.urls')),
+        re_path(r'^gymkhana/', include('applications.gymkhana.urls')),
+        re_path(r'^library/', include('applications.library.urls')),
+        re_path(r'^establishment/', include('applications.establishment.urls')),
+        re_path(r'^ocms/', include('applications.online_cms.urls')),
+        re_path(r'^counselling/', include('applications.counselling_cell.urls')),
+        re_path(r'^hostelmanagement/', include('applications.hostel_management.urls')),
+        re_path(r'^income-expenditure/', include('applications.income_expenditure.urls')),
+        re_path(r'^hr2/', include('applications.hr2.urls')),
+        re_path(r'^recruitment/', include('applications.recruitment.urls')),
+        re_path(r'^examination/', include('applications.examination.urls')),
+        re_path(r'^otheracademic/', include('applications.otheracademic.urls')),
+
+        path(
+            'password-reset/',
+            RateLimitedPasswordResetView.as_view(
+                template_name='registration/password_reset_form.html',
+            ),
+            name='reset_password',
         ),
-        name='reset_password',
-    ),
-    path(
-        'password-reset/done/',
-        auth_views.PasswordResetDoneView.as_view(
-            template_name='registration/password_reset_done.html'
+        path(
+            'password-reset/done/',
+            auth_views.PasswordResetDoneView.as_view(
+                template_name='registration/password_reset_done.html'
+            ),
+            name='password_reset_done',
         ),
-        name='password_reset_done',
-    ),
-    path(
-        'reset/<uidb64>/<token>/',
-        auth_views.PasswordResetConfirmView.as_view(
-            template_name='registration/password_reset_confirm.html',
+        path(
+            'reset/<uidb64>/<token>/',
+            auth_views.PasswordResetConfirmView.as_view(
+                template_name='registration/password_reset_confirm.html',
+            ),
+            name='password_reset_confirm',
         ),
-        name='password_reset_confirm',
-    ),
-    path(
-        'reset/done/',
-        auth_views.PasswordResetCompleteView.as_view(
-            template_name='registration/password_reset_complete.html'
+        path(
+            'reset/done/',
+            auth_views.PasswordResetCompleteView.as_view(
+                template_name='registration/password_reset_complete.html'
+            ),
+            name='password_reset_complete',
         ),
-        name='password_reset_complete',
-    ),
-] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

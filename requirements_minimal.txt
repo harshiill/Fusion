@@ -1,0 +1,16 @@
+Django==3.1.5
+djangorestframework==3.12.2
+django-allauth==0.44.0
+django-cors-headers==3.7.0
+django-filter==2.4.0
+django-model-utils==4.1.1
+django-notifications-hq==1.6.0
+psycopg2-binary==2.8.6
+celery==5.0.5
+pyyaml>=5.1
+openpyxl==3.0.7
+reportlab==3.5.59
+requests==2.25.1
+Pillow==8.1.0
+python-dateutil==2.8.2
+sqlparse==0.4.2

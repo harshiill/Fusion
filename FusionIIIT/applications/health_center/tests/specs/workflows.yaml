@@ -1,0 +1,85 @@
+# Health Center Workflows — Test Design Specifications
+# Total WFs: 3 → Required WF Tests = 6 (2 per WF)
+
+workflows:
+  - id: "PHC-WF-01"
+    title: "Medical Bill Reimbursement Approval"
+    actors: "Employee | PHC Staff | Accounts & Audit | Approving Authority | System"
+    end_states: ["PAID", "REJECTED", "WITHDRAWN"]
+    model_entity: "MedicalRelief (status field)"
+
+    e2e_tests:
+      - scenario: "Employee submits → PHC reviews → Accounts reviews → Authority sanctions → Paid"
+        preconditions: "Staff user exists, PHC staff exists, MedicalRelief model supports workflow"
+        steps:
+          - "Employee POSTs /healthcenter/api/v1/medical-relief/ with amount, description, file"
+          - "MedicalRelief record created with status=SUBMITTED"
+          - "PHC Staff POSTs /healthcenter/api/v1/medical-relief/<id>/review/ to move to PHC_REVIEWED"
+          - "Accounts role reviews (status might transition to ACCOUNTS_REVIEWED)"
+          - "Authority sanctions (status → SANCTIONED)"
+          - "Final payment processed (status → PAID)"
+        expected_final_state: "MedicalRelief.status = PAID, all workflow stages completed, audit trail logged"
+
+    negative_tests:
+      - scenario: "Employee submits → PHC reviews and REJECTS → workflow ends"
+        preconditions: "Staff user, PHC staff, claim exists in SUBMITTED state"
+        steps:
+          - "Employee submits claim"
+          - "PHC Staff POSTs /healthcenter/api/v1/medical-relief/<id>/review/ with reject action"
+          - "Status transitions to REJECTED"
+          - "Workflow stops, no further routing"
+        expected_final_state: "MedicalRelief.status = REJECTED, originating employee notified, no payment"
+
+  - id: "PHC-WF-02"
+    title: "Inventory Procurement Requisition"
+    actors: "PHC Staff | Approving Authority | System"
+    end_states: ["FULFILLED", "REJECTED"]
+    model_entity: "Required_medicine or requisition tracking"
+
+    e2e_tests:
+      - scenario: "PHC Staff creates requisition → Authority approves → PHC Staff marks fulfilled → FULFILLED"
+        preconditions: "Compounder user exists, authority user exists, medicine exists"
+        steps:
+          - "Compounder POSTs /healthcenter/api/v1/medicines/required/ with medicine_id, quantity"
+          - "Required_medicine record created"
+          - "Authority reviews and approves (implied state transition or workflow record)"
+          - "Compounder receives approval notification (PHC-BR-11)"
+          - "Stock received, Compounder creates Stock_entry and Present_Stock"
+          - "PHC Staff marks requisition as FULFILLED"
+        expected_final_state: "Requisition status = FULFILLED, stock linked, all transitions logged"
+
+    negative_tests:
+      - scenario: "PHC Staff creates requisition → Authority rejects → REJECTED"
+        preconditions: "Compounder user, authority user, medicine exists"
+        steps:
+          - "Compounder creates requisition (Required_medicine)"
+          - "Authority reviews and rejects (if workflow implemented)"
+          - "Status set to REJECTED"
+          - "Compounder notified of rejection"
+        expected_final_state: "Requisition status = REJECTED, originator notified, procurement cancelled"
+
+  - id: "PHC-WF-003"
+    title: "Doctor Schedule Publication"
+    actors: "PHC Staff (Schedule Administrator) | System"
+    end_states: ["Published", "Draft Saved"]
+    model_entity: "Doctors_Schedule (date field used as publication marker, or implicit via visibility)"
+
+    e2e_tests:
+      - scenario: "PHC Staff creates schedule → Publishes → Visible to students on next fetch"
+        preconditions: "Compounder user exists, Doctor exists in DB"
+        steps:
+          - "Compounder POSTs /healthcenter/api/v1/doctor-schedules/ with day, from_time, to_time, room"
+          - "Doctors_Schedule record created immediately (implicitly published)"
+          - "Student GETs /healthcenter/student/ or /healthcenter/api/v1/schedules/"
+          - "Schedule appears in response with doctor details"
+        expected_final_state: "Doctors_Schedule exists and is returned to student views, query logic includes it"
+
+    negative_tests:
+      - scenario: "PHC Staff saves schedule as draft → NOT visible to students"
+        preconditions: "Compounder user, doctor exists, draft flag supported"
+        steps:
+          - "Compounder creates schedule with draft=true flag (if supported)"
+          - "Record saved but marked as draft/unpublished"
+          - "Student GETs /healthcenter/student/ or schedule endpoint"
+          - "Draft schedule does NOT appear in response"
+        expected_final_state: "Schedule exists in DB but is_draft=true, not returned to student queries, student sees no change"

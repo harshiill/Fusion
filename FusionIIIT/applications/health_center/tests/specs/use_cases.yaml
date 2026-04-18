@@ -1,0 +1,364 @@
+# Health Center Use Cases — Test Design Specifications
+# Total UCs: 18 → Required UC Tests = 54 (3 per UC)
+# Mapping: Each UC tied to actual /healthcenter/ or /healthcenter/api/v1/ endpoints
+
+use_cases:
+  - id: "PHC-UC-01"
+    title: "View Doctor Schedule & Availability"
+    actors: "Patient"
+    endpoint: "GET /healthcenter/student/ or /healthcenter/api/v1/schedules/"
+    happy_paths:
+      - scenario: "Authenticated student views doctor schedule successfully"
+        preconditions: "Student logged in, Doctor and Doctors_Schedule exist in DB"
+        input_action: "GET /healthcenter/student/ or GET /healthcenter/api/v1/schedules/"
+        expected_result: "HTTP 200, doctor schedule data with availability returned"
+    alternate_paths:
+      - scenario: "Student views schedule when no doctors are registered"
+        preconditions: "Student logged in, DB is empty"
+        input_action: "GET doctor schedule endpoint"
+        expected_result: "HTTP 200, empty list or no data"
+    exception_paths:
+      - scenario: "Unauthenticated user attempts to access doctor schedule"
+        preconditions: "Not logged in"
+        input_action: "GET endpoint without auth"
+        expected_result: "HTTP 302 redirect to login OR HTTP 403"
+
+  - id: "PHC-UC-02"
+    title: "View Medical History & Prescriptions"
+    actors: "Patient"
+    endpoint: "GET /healthcenter/student/ or /healthcenter/api/v1/student/dashboard/"
+    happy_paths:
+      - scenario: "Student views their own prescriptions"
+        preconditions: "Student logged in, prescriptions exist for this user_id"
+        input_action: "GET /healthcenter/student/ or /healthcenter/api/v1/student/dashboard/"
+        expected_result: "HTTP 200, only this student's prescriptions returned"
+    alternate_paths:
+      - scenario: "Student views records with no prescription history"
+        preconditions: "Student logged in, no prescriptions for this user"
+        input_action: "GET prescription endpoint"
+        expected_result: "HTTP 200, empty list or message"
+    exception_paths:
+      - scenario: "Unauthenticated access to medical history"
+        preconditions: "No active session"
+        input_action: "GET prescription endpoint without login"
+        expected_result: "HTTP 302/403, access denied"
+
+  - id: "PHC-UC-03"
+    title: "Download Medical Records"
+    actors: "Patient"
+    endpoint: "GET /healthcenter/compounder/view_file/<file_id>/"
+    happy_paths:
+      - scenario: "Patient downloads their medical records"
+        preconditions: "Patient logged in, file_id exists in prescription"
+        input_action: "GET /healthcenter/compounder/view_file/<file_id>/"
+        expected_result: "HTTP 200, file content returned or download initiated"
+    alternate_paths:
+      - scenario: "Patient downloads a specific prescription file"
+        preconditions: "Patient logged in, specific file_id in prescription"
+        input_action: "GET download endpoint with valid file_id"
+        expected_result: "HTTP 200, file returned"
+    exception_paths:
+      - scenario: "Patient tries to download with invalid file_id"
+        preconditions: "Patient logged in, file_id does not exist"
+        input_action: "GET with invalid file_id"
+        expected_result: "HTTP 404 or error response"
+
+  - id: "PHC-UC-04"
+    title: "Apply for Medical Bill Reimbursement"
+    actors: "Employee (Staff)"
+    endpoint: "POST /healthcenter/api/v1/medical-relief/"
+    happy_paths:
+      - scenario: "Employee submits a valid medical relief/reimbursement claim"
+        preconditions: "Staff/Employee logged in, claim is within submission window"
+        input_action: "POST /healthcenter/api/v1/medical-relief/ with amount, description, file"
+        expected_result: "HTTP 200/201, claim created with status=SUBMITTED"
+    alternate_paths:
+      - scenario: "Employee submits claim with supporting documents"
+        preconditions: "Staff logged in"
+        input_action: "POST medical-relief with file attachment"
+        expected_result: "HTTP 201, claim accepted with file linked"
+    exception_paths:
+      - scenario: "Student (non-staff) attempts reimbursement"
+        preconditions: "Student user logged in"
+        input_action: "POST medical-relief endpoint as student"
+        expected_result: "HTTP 403, only staff eligible (PHC-BR-04)"
+
+  - id: "PHC-UC-05"
+    title: "Track Reimbursement Status"
+    actors: "Employee (Staff)"
+    endpoint: "GET /healthcenter/api/v1/medical-relief/"
+    happy_paths:
+      - scenario: "Employee views their submitted claims"
+        preconditions: "Staff logged in, has submitted claims"
+        input_action: "GET /healthcenter/api/v1/medical-relief/"
+        expected_result: "HTTP 200, claim list with status returned"
+    alternate_paths:
+      - scenario: "Employee views status after claim is approved"
+        preconditions: "Staff logged in, claim has been reviewed"
+        input_action: "GET medical-relief endpoint"
+        expected_result: "HTTP 200, claim shows current status"
+    exception_paths:
+      - scenario: "Unauthenticated access to claims"
+        preconditions: "No session"
+        input_action: "GET medical-relief endpoint"
+        expected_result: "HTTP 403, access denied"
+
+  - id: "PHC-UC-06"
+    title: "Manage Patient Records"
+    actors: "PHC Staff (Compounder)"
+    endpoint: "POST /healthcenter/api/v1/prescriptions/"
+    happy_paths:
+      - scenario: "PHC Staff creates a new patient prescription record"
+        preconditions: "Compounder logged in, Doctor exists"
+        input_action: "POST prescriptions with user_id, doctor_id, details, date"
+        expected_result: "HTTP 200/201, prescription created and linked to patient"
+    alternate_paths:
+      - scenario: "PHC Staff creates prescription for dependent/family member"
+        preconditions: "Compounder logged in, is_dependent=True"
+        input_action: "POST prescription with is_dependent, dependent_name, dependent_relation"
+        expected_result: "HTTP 200/201, dependent prescription created"
+    exception_paths:
+      - scenario: "Student user tries to create prescriptions (PHC-BR-02)"
+        preconditions: "Student user logged in"
+        input_action: "POST prescriptions endpoint as student"
+        expected_result: "HTTP 403, students cannot create prescriptions"
+
+  - id: "PHC-UC-07"
+    title: "Manage Doctor Master Schedule"
+    actors: "PHC Staff (Compounder)"
+    endpoint: "POST /healthcenter/api/v1/doctor-schedules/"
+    happy_paths:
+      - scenario: "PHC Staff creates/updates doctor's weekly schedule"
+        preconditions: "Compounder logged in, Doctor exists"
+        input_action: "POST /healthcenter/api/v1/doctor-schedules/ with day, from_time, to_time, room"
+        expected_result: "HTTP 200, schedule saved and active"
+    alternate_paths:
+      - scenario: "PHC Staff updates existing schedule"
+        preconditions: "Compounder logged in, schedule exists"
+        input_action: "POST with existing doctor_id to upsert"
+        expected_result: "HTTP 200, schedule updated"
+    exception_paths:
+      - scenario: "Patient tries to manage doctor schedule"
+        preconditions: "Student logged in"
+        input_action: "POST doctor-schedules endpoint"
+        expected_result: "HTTP 403, access denied"
+
+  - id: "PHC-UC-08"
+    title: "Mark Doctor Attendance"
+    actors: "PHC Staff (Compounder)"
+    endpoint: "Inferred from doctor availability logic"
+    happy_paths:
+      - scenario: "PHC Staff marks doctor as present/available"
+        preconditions: "Compounder logged in, doctor scheduled for today"
+        input_action: "Implied through schedule visibility or attendance tracking"
+        expected_result: "Doctor availability status updated in real-time for patients"
+    alternate_paths:
+      - scenario: "PHC Staff indicates doctor has departed"
+        preconditions: "Compounder logged in, doctor was available"
+        input_action: "Update doctor availability status"
+        expected_result: "Status changes to departed/unavailable"
+    exception_paths:
+      - scenario: "Attendance marked for doctor not scheduled today"
+        preconditions: "Compounder logged in, doctor has no schedule"
+        input_action: "Try to mark attendance for unscheduled doctor"
+        expected_result: "HTTP 400/404 or validation error"
+
+  - id: "PHC-UC-09"
+    title: "Manage Inventory"
+    actors: "PHC Staff (Compounder)"
+    endpoint: "POST /healthcenter/api/v1/medicines/ and /healthcenter/api/v1/stocks/"
+    happy_paths:
+      - scenario: "PHC Staff adds a new inventory item (medicine)"
+        preconditions: "Compounder logged in"
+        input_action: "POST /healthcenter/api/v1/medicines/ with name, brand, threshold"
+        expected_result: "HTTP 200/201, medicine created"
+    alternate_paths:
+      - scenario: "PHC Staff adds stock entry when medicine received"
+        preconditions: "Compounder logged in, medicine exists"
+        input_action: "POST /healthcenter/api/v1/stocks/ with medicine_id, quantity, expiry_date"
+        expected_result: "HTTP 200/201, stock entry created, Present_Stock record updated"
+    exception_paths:
+      - scenario: "Stock entry with invalid medicine_id"
+        preconditions: "Compounder logged in, medicine_id invalid"
+        input_action: "POST stock with bad medicine_id"
+        expected_result: "HTTP 400, validation error"
+
+  - id: "PHC-UC-10"
+    title: "Create Inventory Requisition"
+    actors: "PHC Staff (Compounder)"
+    endpoint: "POST /healthcenter/api/v1/medicines/required/"
+    happy_paths:
+      - scenario: "PHC Staff creates a procurement requisition"
+        preconditions: "Compounder logged in"
+        input_action: "POST medicines/required/ with medicine_id, quantity, threshold"
+        expected_result: "HTTP 200/201, requisition stored as Required_medicine"
+    alternate_paths:
+      - scenario: "PHC Staff creates requisition after low-stock alert"
+        preconditions: "Compounder logged in, stock below threshold"
+        input_action: "POST requisition with urgent flag"
+        expected_result: "HTTP 200/201, requisition created"
+    exception_paths:
+      - scenario: "Patient user tries to create requisition"
+        preconditions: "Student logged in"
+        input_action: "POST medicines/required/ endpoint"
+        expected_result: "HTTP 403, only PHC Staff can create"
+
+  - id: "PHC-UC-11"
+    title: "Log Ambulance Usage"
+    actors: "PHC Staff (Compounder)"
+    endpoint: "POST /healthcenter/api/v1/ambulances/"
+    happy_paths:
+      - scenario: "PHC Staff logs a new ambulance request"
+        preconditions: "Compounder logged in"
+        input_action: "POST ambulances/ with start_date, end_date, reason"
+        expected_result: "HTTP 200/201, ambulance request created"
+    alternate_paths:
+      - scenario: "PHC Staff cancels an ambulance request"
+        preconditions: "Compounder logged in, request exists"
+        input_action: "DELETE ambulances/<pk>/"
+        expected_result: "HTTP 200/204, request cancelled"
+    exception_paths:
+      - scenario: "Ambulance request missing required fields"
+        preconditions: "Compounder logged in"
+        input_action: "POST ambulances/ without required fields"
+        expected_result: "HTTP 400, validation error"
+
+  - id: "PHC-UC-12"
+    title: "Broadcast Health Announcements"
+    actors: "PHC Staff (Compounder)"
+    endpoint: "POST /healthcenter/api/v1/announcements/ or /healthcenter/announcement/"
+    happy_paths:
+      - scenario: "PHC Staff broadcasts a health announcement"
+        preconditions: "Compounder logged in"
+        input_action: "POST announcements/ with message"
+        expected_result: "HTTP 200/201, announcement created and visible"
+    alternate_paths:
+      - scenario: "PHC Staff creates announcement with attached file"
+        preconditions: "Compounder logged in"
+        input_action: "POST announcement with file attachment"
+        expected_result: "HTTP 200/201, announcement with file stored"
+    exception_paths:
+      - scenario: "Patient tries to broadcast announcement (PHC-BR-03)"
+        preconditions: "Student logged in"
+        input_action: "POST announcements/ endpoint"
+        expected_result: "HTTP 403, students cannot create announcements"
+
+  - id: "PHC-UC-13"
+    title: "Generate System Reports"
+    actors: "PHC Staff (Compounder)"
+    endpoint: "Inferred from API dashboard endpoints"
+    happy_paths:
+      - scenario: "PHC Staff requests inventory/activity report"
+        preconditions: "Compounder logged in, report data exists"
+        input_action: "GET /healthcenter/api/v1/compounder/dashboard/"
+        expected_result: "HTTP 200, report data/statistics returned"
+    alternate_paths:
+      - scenario: "PHC Staff filters report by date range"
+        preconditions: "Compounder logged in"
+        input_action: "GET dashboard with date_from, date_to parameters"
+        expected_result: "HTTP 200, filtered data returned"
+    exception_paths:
+      - scenario: "Patient tries to access reports"
+        preconditions: "Student logged in"
+        input_action: "GET compounder/dashboard endpoint"
+        expected_result: "HTTP 403, access denied"
+
+  - id: "PHC-UC-14"
+    title: "Mark Requisition as Fulfilled"
+    actors: "PHC Staff (Compounder)"
+    endpoint: "Inferred from Required_medicine model operations"
+    happy_paths:
+      - scenario: "PHC Staff marks a requisition as fulfilled after receiving stock"
+        preconditions: "Compounder logged in, requisition exists"
+        input_action: "Update Required_medicine record to fulfilled status"
+        expected_result: "Requisition status updated, inventory linked"
+    alternate_paths:
+      - scenario: "PHC Staff records partial fulfillment"
+        preconditions: "Compounder logged in"
+        input_action: "Partial stock received and recorded"
+        expected_result: "Partial fulfillment tracked"
+    exception_paths:
+      - scenario: "Fulfill non-existent requisition"
+        preconditions: "Compounder logged in"
+        input_action: "Try to fulfill requisition_id that doesn't exist"
+        expected_result: "HTTP 404 or validation error"
+
+  - id: "PHC-UC-15"
+    title: "Process Reimbursement Claim"
+    actors: "PHC Staff, Accounts, Authority"
+    endpoint: "POST /healthcenter/api/v1/medical-relief/<id>/review/"
+    happy_paths:
+      - scenario: "PHC Staff reviews and forwards claim to Accounts"
+        preconditions: "Compounder logged in, claim in SUBMITTED state"
+        input_action: "POST medical-relief/<id>/review/ with next_status and comments"
+        expected_result: "HTTP 200, claim status updated to PHC_REVIEWED"
+    alternate_paths:
+      - scenario: "PHC Staff returns claim for clarification"
+        preconditions: "Compounder logged in, pending claim"
+        input_action: "POST review with action=return_for_clarification"
+        expected_result: "HTTP 200, claim status updated, employee notified"
+    exception_paths:
+      - scenario: "Invalid status transition attempted"
+        preconditions: "Compounder logged in, claim in final state"
+        input_action: "POST review with invalid status"
+        expected_result: "HTTP 400, invalid transition"
+
+  - id: "PHC-UC-16"
+    title: "Approve Inventory Requisition"
+    actors: "Approving Authority"
+    endpoint: "POST /healthcenter/api/v1/medical-relief/<id>/review/ (authority flow)"
+    happy_paths:
+      - scenario: "Authority approves a pending requisition"
+        preconditions: "Authority user logged in, requisition pending"
+        input_action: "POST review endpoint to approve"
+        expected_result: "HTTP 200, status=SANCTIONED, PHC Staff notified"
+    alternate_paths:
+      - scenario: "Authority approves with remarks"
+        preconditions: "Authority logged in, requisition pending"
+        input_action: "POST approve with remarks/comments"
+        expected_result: "HTTP 200, approval recorded with notes"
+    exception_paths:
+      - scenario: "Authority rejects a requisition"
+        preconditions: "Authority logged in, requisition pending"
+        input_action: "POST review with reject action"
+        expected_result: "HTTP 200, status=REJECTED, originator notified"
+
+  - id: "PHC-UC-17"
+    title: "Send Automated Notifications"
+    actors: "System (via signals/async tasks)"
+    endpoint: "Implicit in model state changes"
+    happy_paths:
+      - scenario: "System sends notification when claim status changes"
+        preconditions: "Claim exists and status is updated"
+        input_action: "Trigger status change via review endpoint"
+        expected_result: "Notification record created in system (feeds or notification model)"
+    alternate_paths:
+      - scenario: "System sends notification when requisition is approved"
+        preconditions: "Requisition status changes to SANCTIONED"
+        input_action: "Authority approves requisition"
+        expected_result: "PHC Staff originator receives notification"
+    exception_paths:
+      - scenario: "Notification system handles missing user gracefully"
+        preconditions: "Status change for orphaned record"
+        input_action: "Change status of claim with deleted user"
+        expected_result: "System doesn't crash, graceful error handling"
+
+  - id: "PHC-UC-18"
+    title: "Trigger Low-Stock Alerts"
+    actors: "System (via business logic in add_stock_api or model operations)"
+    endpoint: "POST /healthcenter/api/v1/stocks/"
+    happy_paths:
+      - scenario: "Low-stock alert triggered when stock falls below/at threshold"
+        preconditions: "Medicine has threshold=10, stock drops to 9 or below"
+        input_action: "POST stock deduction or update"
+        expected_result: "Low-stock alert/notification triggered for PHC Staff"
+    alternate_paths:
+      - scenario: "Low-stock alert triggered at exact threshold boundary"
+        preconditions: "Stock equals reorder_threshold"
+        input_action: "One more unit deducted"
+        expected_result: "Alert triggered (stock <= threshold)"
+    exception_paths:
+      - scenario: "No alert when stock remains above threshold"
+        preconditions: "Threshold=5, stock=20"
+        input_action: "Deduct 5 units (stock becomes 15)"
+        expected_result: "No low-stock alert created"

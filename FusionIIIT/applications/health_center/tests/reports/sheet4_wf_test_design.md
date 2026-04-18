@@ -1,0 +1,11 @@
+# Sheet 4 — WF Test Design
+
+| Test ID | WF ID | Category | Scenario | Expected Final State |
+|---------|-------|----------|----------|----------|
+| WF-01-E2E-01 | PHC-WF-01 | End-to-End | Reimbursement: Submit → Review → Sanction → Pay | Status=PAID |
+| WF-01-NEG-01 | PHC-WF-01 | Negative | Reimbursement: Submit → Reject | Status=REJECTED |
+| WF-02-E2E-01 | PHC-WF-02 | End-to-End | Requisition: Create → Approve → Fulfill | Status=FULFILLED |
+| WF-02-NEG-01 | PHC-WF-02 | Negative | Requisition: Create → Reject | Status=REJECTED |
+| WF-003-E2E-01 | PHC-WF-003 | End-to-End | Schedule: Create → Publish → Visible | Schedule visible to students |
+| WF-003-NEG-01 | PHC-WF-003 | Negative | Schedule: Create as draft → Not visible | Schedule not visible if draft |
+

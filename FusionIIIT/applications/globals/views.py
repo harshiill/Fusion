@@ -1,4 +1,3 @@
-from audioop import reverse
 import json
 
 from django.contrib.auth import logout
@@ -11,6 +10,7 @@ from django.http import HttpResponse, HttpResponseRedirect, HttpResponseNotFound
 from django.shortcuts import get_object_or_404, redirect, render
 from django.conf import settings
 from django.utils import timezone
+from django.urls import reverse
 from PIL import Image
 
 from applications.academic_information.models import Student
@@ -27,7 +27,10 @@ from applications.placement_cell.models import (Achievement, Course, Education,
                                                 Experience, Has, Patent,
                                                 Project, Publication, Skill, PlacementStatus)
 from Fusion.settings.common import LOGIN_URL
-from notifications.models import Notification
+try:
+    from notifications.models import Notification
+except Exception:
+    Notification = None
 from .models import *
 from applications.hostel_management.models import (HallCaretaker,HallWarden)
 

@@ -1,0 +1,135 @@
+# Health Center Business Rules — Test Design Specifications
+# Total BRs: 11 → Required BR Tests = 22 (2 per BR)
+
+business_rules:
+  - id: "PHC-BR-01"
+    title: "Doctor Availability Display Logic"
+    description: "Patient view must show both static schedule AND real-time availability status per PHC-UC-01"
+    valid_tests:
+      - test_name: "Availability display includes schedule and status"
+        input_action: "GET /healthcenter/student/ or /healthcenter/api/v1/schedules/ as authenticated patient"
+        expected_result: "Response contains both doctor schedule data AND availability/attendance status field"
+    invalid_tests:
+      - test_name: "Response missing attendance/status component"
+        input_action: "Verify endpoint response for missing status field"
+        expected_result: "If only schedule without status, or vice versa, BR is Partial"
+
+  - id: "PHC-BR-02"
+    title: "Patient Data Access Control"
+    description: "Patient can only access their own records; PHC Staff can access all; implements data isolation"
+    valid_tests:
+      - test_name: "Patient views only own prescriptions"
+        input_action: "Patient A logs in and requests their prescriptions"
+        expected_result: "Only prescriptions where All_Prescription.user_id == patient_A's ExtraInfo.id returned"
+    invalid_tests:
+      - test_name: "Patient cannot cross-access other patient records"
+        input_action: "Patient A requests Patient B's prescription by explicit ID or parameter manipulation"
+        expected_result: "HTTP 403/404 or same data as own (no data leakage)"
+
+  - id: "PHC-BR-03"
+    title: "Role-Based Access Control (RBAC) — Broadcast & Management"
+    description: "Restricted functions (create announcements, manage inventory, create prescriptions) only available to PHC Staff/Compounder"
+    valid_tests:
+      - test_name: "Compounder can access staff-only endpoints"
+        input_action: "PHC Staff (Compounder) executes POST /healthcenter/api/v1/announcements/ or /medicines/"
+        expected_result: "HTTP 200/201, action succeeds"
+    invalid_tests:
+      - test_name: "Student cannot access staff-only endpoints"
+        input_action: "Student user attempts POST /healthcenter/api/v1/announcements/ or /medicines/"
+        expected_result: "HTTP 403/401, access denied"
+
+  - id: "PHC-BR-04"
+    title: "Reimbursement Eligibility (Employee Only)"
+    description: "Only Staff (ExtraInfo.user_type='staff') can submit medical relief claims, not Students"
+    valid_tests:
+      - test_name: "Staff/Employee can submit medical relief"
+        input_action: "Staff user (user_type='staff') POSTs /healthcenter/api/v1/medical-relief/"
+        expected_result: "HTTP 200/201, MedicalRelief record created"
+    invalid_tests:
+      - test_name: "Student cannot submit medical relief"
+        input_action: "Student user (user_type='student') POSTs /healthcenter/api/v1/medical-relief/"
+        expected_result: "HTTP 403, submission blocked or MedicalRelief not created"
+
+  - id: "PHC-BR-05"
+    title: "Reimbursement Claim Prerequisite (Prescription Reference)"
+    description: "Medical relief claim should ideally reference an existing prescription (though implementation may not enforce)"
+    valid_tests:
+      - test_name: "Claim can reference existing prescription"
+        input_action: "Submit medical relief with reference to valid prescription_id or All_Prescription record"
+        expected_result: "Claim accepted, linkage established or at least not rejected"
+    invalid_tests:
+      - test_name: "Claim with invalid/non-existent prescription reference"
+        input_action: "Submit claim with prescription_id that doesn't exist"
+        expected_result: "HTTP 400/422 or system gracefully handles missing reference"
+
+  - id: "PHC-BR-06"
+    title: "Reimbursement Submission Window"
+    description: "Medical relief must be submitted within configurable days from expense/service date (implied 30-90 days)"
+    valid_tests:
+      - test_name: "Claim within submission window accepted"
+        input_action: "Submit claim with expense_date = 15 days ago"
+        expected_result: "Claim accepted, HTTP 200/201"
+    invalid_tests:
+      - test_name: "Claim outside submission window rejected"
+        input_action: "Submit claim with expense_date > 180 days ago"
+        expected_result: "HTTP 400 or claim rejected with date validation error"
+
+  - id: "PHC-BR-07"
+    title: "Inventory Low-Stock Alert Trigger"
+    description: "Present_Stock alert/signal generated when quantity <= All_Medicine.threshold"
+    valid_tests:
+      - test_name: "Alert triggered when stock drops to or below threshold"
+        input_action: "Add stock entry; deduct or update so Present_Stock.quantity <= All_Medicine.threshold"
+        expected_result: "Alert/flag created in system (notification, feed entry, or dedicated alert model)"
+    invalid_tests:
+      - test_name: "No alert when stock remains above threshold"
+        input_action: "Add stock entry and deduct while quantity stays > threshold"
+        expected_result: "No alert triggered, system operates normally"
+
+  - id: "PHC-BR-08"
+    title: "Reimbursement Workflow State Progression"
+    description: "Claim follows: SUBMITTED → PHC_REVIEWED → ACCOUNTS_REVIEWED → SANCTIONED/REJECTED → (optional) PAID; no backward jumps except re-application"
+    valid_tests:
+      - test_name: "Valid forward workflow: SUBMITTED → PHC_REVIEWED"
+        input_action: "POST /healthcenter/api/v1/medical-relief/<id>/review/ with next status"
+        expected_result: "Status transitions from SUBMITTED to PHC_REVIEWED, HTTP 200"
+    invalid_tests:
+      - test_name: "Invalid backward transition: SANCTIONED → SUBMITTED"
+        input_action: "Attempt to change status from SANCTIONED back to SUBMITTED"
+        expected_result: "HTTP 400 or status unchanged; invalid transition rejected"
+
+  - id: "PHC-BR-09"
+    title: "Data Audit Trail Requirement"
+    description: "All sensitive mutations (create/update prescriptions, medical relief, requisitions) logged for compliance"
+    valid_tests:
+      - test_name: "Audit trail created after sensitive data change"
+        input_action: "Create or modify a prescription or medical relief record"
+        expected_result: "Audit/activity log entry exists with user_id, timestamp, entity_id, action_type"
+    invalid_tests:
+      - test_name: "Missing audit trail = BR not enforced"
+        input_action: "Verify audit existence after sensitive operation"
+        expected_result: "If no log entry found, BR is Not Enforced (defect)"
+
+  - id: "PHC-BR-10"
+    title: "Inventory Requisition Approval Requirement"
+    description: "Requisition (Required_medicine or similar) must transition through approval before procurement can proceed"
+    valid_tests:
+      - test_name: "Requisition can be marked fulfilled after approval"
+        input_action: "Create requisition, simulate approval, then mark fulfilled"
+        expected_result: "Fulfillment succeeds, no errors"
+    invalid_tests:
+      - test_name: "Cannot fulfill unapproved requisition"
+        input_action: "Create new requisition (status implied Submitted) and immediately try to fulfill"
+        expected_result: "HTTP 400 or fulfillment blocked; must be approved first"
+
+  - id: "PHC-BR-11"
+    title: "Requisition Status Change Notification"
+    description: "When requisition (or medical relief) transitions to SANCTIONED/APPROVED or REJECTED, originator receives notification"
+    valid_tests:
+      - test_name: "Notification sent when requisition is SANCTIONED"
+        input_action: "POST /healthcenter/api/v1/medical-relief/<id>/review/ to approve/sanction"
+        expected_result: "Notification record created for originating user (feeds, notification table, or system signal)"
+    invalid_tests:
+      - test_name: "No notification for intermediate status (e.g., SUBMITTED)"
+        input_action: "Create new claim (status=SUBMITTED), verify no notification"
+        expected_result: "No notification triggered for non-terminal or intermediate states"
