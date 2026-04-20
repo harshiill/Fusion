@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from django.apps import apps
 from django.db import transaction
 
 from applications.globals.models import ExtraInfo
@@ -17,6 +18,7 @@ from ..models import (
     Present_Stock,
     Required_medicine,
     Stock_entry,
+    HealthCenterFeedback,
     medical_relief,
 )
 
@@ -26,7 +28,14 @@ def ping_service():
 
 
 def _model_or_none(model_name):
-    return globals().get(model_name)
+    model = globals().get(model_name)
+    if model is not None:
+        return model
+
+    try:
+        return apps.get_model("health_center", model_name)
+    except Exception:
+        return None
 
 
 def reset_counter():
@@ -192,15 +201,15 @@ def cancel_appointment(pk):
 
 
 def create_complaint(user, complaint_text):
-    complaint_model = _model_or_none("Complaint")
+    complaint_model = _model_or_none("HealthCenterFeedback") or _model_or_none("Complaint")
     if complaint_model is None:
         raise LookupError("Complaint model not available in current schema")
     user_info = ExtraInfo.objects.get(user=user)
-    return complaint_model.objects.create(user_id=user_info, complaint=complaint_text, date=datetime.now())
+    return complaint_model.objects.create(user_id=user_info, complaint=complaint_text)
 
 
 def respond_complaint(complaint_id, feedback):
-    complaint_model = _model_or_none("Complaint")
+    complaint_model = _model_or_none("HealthCenterFeedback") or _model_or_none("Complaint")
     if complaint_model is None:
         raise LookupError("Complaint model not available in current schema")
     complaint_model.objects.filter(pk=complaint_id).update(feedback=feedback)

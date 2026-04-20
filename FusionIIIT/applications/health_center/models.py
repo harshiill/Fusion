@@ -43,11 +43,18 @@ class Pathologist(models.Model):
     def __str__(self):
         return self.pathologist_name
 
-# class Complaint(models.Model):
-#     user_id = models.ForeignKey(ExtraInfo,on_delete=models.CASCADE)
-#     feedback = models.CharField(max_length=100, null=True, blank=False)                          #This is the feedback given by the compounder
-#     complaint = models.CharField(max_length=100, null=True, blank=False)                         #Here Complaint given by user cannot be NULL!
-#     date = models.DateField(auto_now=True)
+class HealthCenterFeedback(models.Model):
+    user_id = models.ForeignKey(ExtraInfo, on_delete=models.CASCADE)
+    complaint = models.TextField()
+    feedback = models.TextField(blank=True, default="")
+    date = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-date", "-id"]
+
+    def __str__(self):
+        username = getattr(getattr(self.user_id, "user", None), "username", "unknown")
+        return f"{username}: {self.complaint[:40]}"
 
 class All_Medicine(models.Model):
     medicine_name = models.CharField(max_length=1000,default="NOT_SET", null=True)
