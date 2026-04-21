@@ -265,3 +265,43 @@ class MedicalProfile(models.Model):
     chronic_conditions = models.TextField(null=True, blank=True)
     emergency_contact = models.CharField(max_length=20, null=True, blank=True)
 
+
+class InventoryRequisition(models.Model):
+    STATUS_SUBMITTED = "Submitted"
+    STATUS_APPROVED = "Approved"
+    STATUS_REJECTED = "Rejected"
+    STATUS_FULFILLED = "Fulfilled"
+
+    STATUS_CHOICES = (
+        (STATUS_SUBMITTED, "Submitted"),
+        (STATUS_APPROVED, "Approved"),
+        (STATUS_REJECTED, "Rejected"),
+        (STATUS_FULFILLED, "Fulfilled"),
+    )
+
+    originator = models.ForeignKey(User, on_delete=models.CASCADE, related_name="inventory_requisitions")
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default=STATUS_SUBMITTED)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    remarks = models.TextField(blank=True, null=True)
+    approved_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="approved_requisitions",
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"Requisition #{self.id} - {self.status}"
+
+
+class InventoryRequisitionItem(models.Model):
+    requisition = models.ForeignKey(InventoryRequisition, on_delete=models.CASCADE, related_name="items")
+    medicine_id = models.ForeignKey(All_Medicine, on_delete=models.CASCADE)
+    quantity = models.PositiveIntegerField()
+    notes = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.quantity} x {self.medicine_id}"

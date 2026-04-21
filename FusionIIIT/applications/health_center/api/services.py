@@ -20,9 +20,10 @@ from ..models import (
     Stock_entry,
     HealthCenterFeedback,
     medical_relief,
+    InventoryRequisition,
+    InventoryRequisitionItem,
 )
-
-
+from django.utils import timezone
 def ping_service():
     return True
 
@@ -306,3 +307,49 @@ def add_prescribed_medicine(data):
 
 def create_medical_relief(description, uploaded_file):
     return medical_relief.objects.create(description=description, file=uploaded_file)
+
+
+def notify_requisition_status(req):
+    message = f"Your Inventory Requisition #{req.id} has been {req.status}."
+    healthcare_center_notif(sender=req.approved_by, recipient=req.originator, type='new_announce', message=message)
+
+@transaction.atomic
+def create_requisition(user, items_data, remarks=None):
+    req = InventoryRequisition.objects.create(originator=user, remarks=remarks)
+    for item_data in items_data:
+        InventoryRequisitionItem.objects.create(
+            requisition=req,
+            medicine_id=item_data["medicine_id"],
+            quantity=item_data["quantity"],
+            notes=item_data.get("notes", "")
+        )
+    return req
+
+@transaction.atomic
+def approve_or_reject_requisition(req, authority_user, status, remarks=None):
+    if req.status != InventoryRequisition.STATUS_SUBMITTED:
+        raise ValueError("Only submitted requisitions can be approved or rejected.")
+    req.status = status
+    if remarks is not None:
+        req.remarks = remarks
+    req.approved_by = authority_user
+    req.approved_at = timezone.now()
+    req.save(update_fields=["status", "remarks", "approved_by", "approved_at", "updated_at"])
+    
+    notify_requisition_status(req)
+    return req
+
+@transaction.atomic
+def fulfill_requisition(req, staff_user):
+    if req.status != InventoryRequisition.STATUS_APPROVED:
+        raise ValueError("Only approved requisitions can be fulfilled.")
+    req.status = InventoryRequisition.STATUS_FULFILLED
+    req.save(update_fields=["status", "updated_at"])
+    
+    # Update medicine quantities
+    for item in req.items.all():
+        medicine = item.medicine_id
+        medicine.quantity += item.quantity
+        medicine.save(update_fields=["quantity"])
+        
+    return req

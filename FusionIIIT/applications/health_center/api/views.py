@@ -2540,3 +2540,83 @@ def discharge_patient_api(request, pk):
     if hospital_admit_model is None:
         raise Http404("Hospital admit flow is not available in current schema")
     return Response({"detail": "Not yet implemented for active schema"}, status=status.HTTP_501_NOT_IMPLEMENTED)
+
+
+from .selectors import get_all_requisitions, get_requisitions_for_staff, get_pending_requisitions, get_requisition_by_id
+from .services import create_requisition, approve_or_reject_requisition, fulfill_requisition
+from .serializers import InventoryRequisitionSerializer, InventoryRequisitionActionSerializer
+from rest_framework.exceptions import PermissionDenied
+
+def ensure_approving_authority_access(request):
+    designations = get_designations_for_user(request.user)
+    if "phc_admin" not in designations and "compounder" not in designations:
+        raise PermissionDenied("User does not have Approving Authority access.")
+
+@api_view(["GET", "POST"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def requisition_list_create_api(request):
+    ensure_compounder_access(request)
+    if request.method == "GET":
+        qs = get_requisitions_for_staff(request.user)
+        return Response(InventoryRequisitionSerializer(qs, many=True).data, status=status.HTTP_200_OK)
+    
+    items_data = request.data.get("items", [])
+    remarks = request.data.get("remarks", "")
+    req = create_requisition(request.user, items_data, remarks)
+    return Response(InventoryRequisitionSerializer(req).data, status=status.HTTP_201_CREATED)
+
+@api_view(["GET"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def requisition_detail_api(request, req_id):
+    req = get_requisition_by_id(req_id)
+    if not req:
+        return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+    return Response(InventoryRequisitionSerializer(req).data, status=status.HTTP_200_OK)
+
+@api_view(["GET"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def requisition_pending_api(request):
+    ensure_approving_authority_access(request)
+    qs = get_pending_requisitions()
+    return Response(InventoryRequisitionSerializer(qs, many=True).data, status=status.HTTP_200_OK)
+
+@api_view(["PATCH", "POST"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def requisition_action_api(request, req_id):
+    ensure_approving_authority_access(request)
+    req = get_requisition_by_id(req_id)
+    if not req:
+        return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    serializer = InventoryRequisitionActionSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    
+    try:
+        updated_req = approve_or_reject_requisition(
+            req=req,
+            authority_user=request.user,
+            status=serializer.validated_data["status"],
+            remarks=serializer.validated_data.get("remarks")
+        )
+        return Response(InventoryRequisitionSerializer(updated_req).data, status=status.HTTP_200_OK)
+    except ValueError as e:
+        return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(["PATCH", "POST"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def requisition_fulfill_api(request, req_id):
+    ensure_compounder_access(request)
+    req = get_requisition_by_id(req_id)
+    if not req:
+        return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    try:
+        updated_req = fulfill_requisition(req, request.user)
+        return Response(InventoryRequisitionSerializer(updated_req).data, status=status.HTTP_200_OK)
+    except ValueError as e:
+        return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)

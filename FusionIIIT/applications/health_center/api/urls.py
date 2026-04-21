@@ -62,4 +62,10 @@ urlpatterns = [
 
     re_path(r"^hospital-admits/$", views.admit_patient_api, name="admit_patient_api"),
     re_path(r"^hospital-admits/(?P<pk>[0-9]+)/discharge/$", views.discharge_patient_api, name="discharge_patient_api"),
-]
+
+    re_path(r"^requisitions/$", views.requisition_list_create_api, name="requisition_list_create_api"),
+    re_path(r"^requisitions/pending/$", views.requisition_pending_api, name="requisition_pending_api"),
+    re_path(r"^requisitions/(?P<req_id>[0-9]+)/$", views.requisition_detail_api, name="requisition_detail_api"),
+    re_path(r"^requisitions/(?P<req_id>[0-9]+)/action/$", views.requisition_action_api, name="requisition_action_api"),
+    re_path(r"^requisitions/(?P<req_id>[0-9]+)/fulfill/$", views.requisition_fulfill_api, name="requisition_fulfill_api"),
+]

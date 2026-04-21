@@ -19,3 +19,13 @@ admin.site.register(Pathologist_Schedule)
 # admin.site.register(Announcements)
 # admin.site.register(SpecialRequest)
 admin.site.register(Pathologist) 
+
+class InventoryRequisitionItemInline(admin.TabularInline):
+    model = InventoryRequisitionItem
+    extra = 1
+
+@admin.register(InventoryRequisition)
+class InventoryRequisitionAdmin(admin.ModelAdmin):
+    list_display = ('id', 'originator', 'status', 'created_at', 'updated_at')
+    list_filter = ('status', 'created_at')
+    inlines = [InventoryRequisitionItemInline]
