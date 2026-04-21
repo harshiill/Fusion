@@ -19,6 +19,7 @@ from .serializers import (
     AllMedicineSerializer,
     AllPrescribedMedicineSerializer,
     AllPrescriptionSerializer,
+    DoctorAttendanceSerializer,
     MedicalProfileSerializer,
     MedicalReliefWorkflowSerializer,
     AmbulanceRequestCreateSerializer,
@@ -62,6 +63,7 @@ from ..models import (
     All_Prescribed_medicine,
     All_Prescription,
     Doctor,
+    DoctorAttendance,
     Doctors_Schedule,
     HealthCenterFeedback,
     Pathologist,
@@ -115,6 +117,14 @@ def _safe_int(value, default=None):
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _normalize_bool(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "present"}
 
 
 def _normalize_day_value(day_value):
@@ -385,6 +395,7 @@ def _build_legacy_doctor_schedule(data):
     for doctor in data["doctors"]:
         result.append(
             {
+                "id": doctor.id,
                 "name": doctor.doctor_name,
                 "specialization": doctor.specialization,
                 "availability": schedule_by_doctor_id.get(doctor.id, []),
@@ -698,7 +709,53 @@ def _build_compounder_dashboard_payload():
     }
 
 
-def _handle_legacy_compounder_management_payload(payload, data):
+def _handle_legacy_compounder_management_payload(payload, data, request=None):
+    if _is_legacy_flag_set(payload, "mark_doctor_attendance"):
+        doctor = _resolve_doctor(payload.get("doctor_id") or payload.get("doctor") or payload.get("doctor_name"))
+        if not doctor:
+            return Response({"status": 0, "detail": "Doctor not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        attendance_date = payload.get("attendance_date")
+        try:
+            attendance_date = _normalize_date_value(attendance_date) if attendance_date else date.today()
+        except ValueError as exc:
+            return Response({"status": 0, "detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        is_present = _normalize_bool(payload.get("is_present"), default=False)
+        marked_by = ExtraInfo.objects.filter(user=request.user).first() if request else None
+
+        record, _ = DoctorAttendance.objects.update_or_create(
+            doctor_id=doctor,
+            attendance_date=attendance_date,
+            defaults={"is_present": is_present, "marked_by": marked_by},
+        )
+        return Response(
+            {
+                "status": 1,
+                "detail": "Attendance updated",
+                "attendance": DoctorAttendanceSerializer(record).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    if _is_legacy_flag_set(payload, "get_doctor_attendance"):
+        attendance_date = payload.get("attendance_date")
+        try:
+            attendance_date = _normalize_date_value(attendance_date) if attendance_date else date.today()
+        except ValueError as exc:
+            return Response({"status": 0, "detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        rows = DoctorAttendance.objects.select_related("doctor_id").filter(attendance_date=attendance_date)
+        attendance = {
+            row.doctor_id_id: {
+                "doctor_id": row.doctor_id_id,
+                "attendance_date": row.attendance_date,
+                "is_present": row.is_present,
+            }
+            for row in rows
+        }
+        return Response({"status": 1, "attendance": attendance}, status=status.HTTP_200_OK)
+
     if _is_legacy_flag_set(payload, "add_doctor"):
         doctor_payload = {
             "doctor_name": (payload.get("new_doctor") or payload.get("doctor_name") or "").strip(),
@@ -1801,7 +1858,7 @@ def compounder_legacy_api(request):
     if request.method == "POST":
         payload = request.data or {}
 
-        managed_response = _handle_legacy_compounder_management_payload(payload, data)
+        managed_response = _handle_legacy_compounder_management_payload(payload, data, request=request)
         if managed_response is not None:
             return managed_response
 
@@ -2275,6 +2332,43 @@ def doctor_schedule_api(request, doctor_id):
         .order_by("day", "from_time", "to_time")
     )
     return Response(DoctorsScheduleSerializer(schedules, many=True).data, status=status.HTTP_200_OK)
+
+
+@api_view(["GET", "POST"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def doctor_attendance_api(request):
+    if request.method == "GET":
+        attendance_date_raw = request.query_params.get("date")
+        try:
+            attendance_date = _normalize_date_value(attendance_date_raw) if attendance_date_raw else date.today()
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        rows = DoctorAttendance.objects.select_related("doctor_id").filter(attendance_date=attendance_date)
+        return Response(DoctorAttendanceSerializer(rows, many=True).data, status=status.HTTP_200_OK)
+
+    ensure_compounder_access(request)
+    payload = request.data
+    doctor = _resolve_doctor(payload.get("doctor_id") or payload.get("doctor") or payload.get("doctor_name"))
+    if not doctor:
+        return Response({"detail": "Doctor not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    attendance_date_raw = payload.get("attendance_date")
+    try:
+        attendance_date = _normalize_date_value(attendance_date_raw) if attendance_date_raw else date.today()
+    except ValueError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    is_present = _normalize_bool(payload.get("is_present"), default=False)
+    marked_by = ExtraInfo.objects.filter(user=request.user).first()
+
+    row, _ = DoctorAttendance.objects.update_or_create(
+        doctor_id=doctor,
+        attendance_date=attendance_date,
+        defaults={"is_present": is_present, "marked_by": marked_by},
+    )
+    return Response(DoctorAttendanceSerializer(row).data, status=status.HTTP_200_OK)
 
 
 @api_view(["GET"])

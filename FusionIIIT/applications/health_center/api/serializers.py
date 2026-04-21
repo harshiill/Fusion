@@ -8,6 +8,7 @@ from ..models import (
     All_Prescribed_medicine,
     All_Prescription,
     Doctor,
+    DoctorAttendance,
     Doctors_Schedule,
     MedicalRelief,
     MedicalProfile,
@@ -118,6 +119,13 @@ class DoctorsScheduleSerializer(serializers.ModelSerializer):
         if overlaps.exists():
             raise serializers.ValidationError("Schedule conflict for this doctor and day.")
         return data
+
+
+class DoctorAttendanceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DoctorAttendance
+        fields = ["id", "doctor_id", "attendance_date", "is_present", "marked_by", "marked_at"]
+        read_only_fields = ["id", "marked_by", "marked_at"]
 
 
 class PathologistScheduleSerializer(serializers.ModelSerializer):

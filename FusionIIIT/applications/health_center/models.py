@@ -104,6 +104,27 @@ class Doctors_Schedule(models.Model):
     to_time = models.TimeField(null=True,blank=True)
     room = models.IntegerField()
     date = models.DateField(auto_now=True)
+
+
+class DoctorAttendance(models.Model):
+    doctor_id = models.ForeignKey(Doctor, on_delete=models.CASCADE)
+    attendance_date = models.DateField(default=date.today)
+    is_present = models.BooleanField(default=False)
+    marked_by = models.ForeignKey(
+        ExtraInfo,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="marked_doctor_attendance",
+    )
+    marked_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("doctor_id", "attendance_date")
+
+    def __str__(self):
+        status = "Present" if self.is_present else "Absent"
+        return f"{self.doctor_id.doctor_name} {self.attendance_date} {status}"
     
 class Pathologist_Schedule(models.Model):
     # doctor_id = models.ForeignKey(Doctor,on_delete=models.CASCADE)

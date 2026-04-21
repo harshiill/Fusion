@@ -23,6 +23,7 @@ urlpatterns = [
 
     re_path(r"^doctors/$", views.add_doctor_api, name="add_doctor_api"),
     re_path(r"^doctors/(?P<doctor_id>[0-9]+)/schedule/$", views.doctor_schedule_api, name="doctor_schedule_api"),
+    re_path(r"^doctor-attendance/$", views.doctor_attendance_api, name="doctor_attendance_api"),
     re_path(r"^doctors/(?P<pk>[0-9]+)/$", views.remove_doctor_api, name="remove_doctor_api"),
     re_path(r"^pathologists/$", views.add_pathologist_api, name="add_pathologist_api"),
     re_path(r"^pathologist-schedules/list/$", views.pathologist_schedule_list_api, name="pathologist_schedule_list_api"),
