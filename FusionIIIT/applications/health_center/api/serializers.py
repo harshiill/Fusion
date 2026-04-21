@@ -8,6 +8,7 @@ from ..models import (
     All_Prescribed_medicine,
     All_Prescription,
     Doctor,
+    DoctorAttendance,
     Doctors_Schedule,
     MedicalRelief,
     MedicalProfile,
@@ -17,6 +18,8 @@ from ..models import (
     Required_medicine,
     Stock_entry,
     medical_relief,
+    InventoryRequisition,
+    InventoryRequisitionItem,
 )
 
 
@@ -118,6 +121,13 @@ class DoctorsScheduleSerializer(serializers.ModelSerializer):
         if overlaps.exists():
             raise serializers.ValidationError("Schedule conflict for this doctor and day.")
         return data
+
+
+class DoctorAttendanceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DoctorAttendance
+        fields = ["id", "doctor_id", "attendance_date", "is_present", "marked_by", "marked_at"]
+        read_only_fields = ["id", "marked_by", "marked_at"]
 
 
 class PathologistScheduleSerializer(serializers.ModelSerializer):
@@ -291,3 +301,30 @@ class ComplaintCreateSerializer(serializers.Serializer):
 class ComplaintResponseSerializer(serializers.Serializer):
     complaint_id = serializers.IntegerField()
     feedback = serializers.CharField(max_length=1000)
+
+
+class InventoryRequisitionItemSerializer(serializers.ModelSerializer):
+    medicine_name = serializers.CharField(source="medicine_id.medicine_name", read_only=True)
+
+    class Meta:
+        model = InventoryRequisitionItem
+        fields = ["id", "medicine_id", "medicine_name", "quantity", "notes"]
+
+
+class InventoryRequisitionSerializer(serializers.ModelSerializer):
+    items = InventoryRequisitionItemSerializer(many=True, required=False)
+    originator_name = serializers.CharField(source="originator.get_full_name", read_only=True)
+    approved_by_name = serializers.CharField(source="approved_by.get_full_name", read_only=True)
+
+    class Meta:
+        model = InventoryRequisition
+        fields = [
+            "id", "originator", "originator_name", "status", "created_at", "updated_at",
+            "remarks", "approved_by", "approved_by_name", "approved_at", "items"
+        ]
+        read_only_fields = ["id", "originator", "status", "created_at", "updated_at", "approved_by", "approved_at"]
+
+
+class InventoryRequisitionActionSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=[InventoryRequisition.STATUS_APPROVED, InventoryRequisition.STATUS_REJECTED])
+    remarks = serializers.CharField(required=False, allow_blank=True)

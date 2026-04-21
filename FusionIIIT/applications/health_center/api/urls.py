@@ -23,6 +23,7 @@ urlpatterns = [
 
     re_path(r"^doctors/$", views.add_doctor_api, name="add_doctor_api"),
     re_path(r"^doctors/(?P<doctor_id>[0-9]+)/schedule/$", views.doctor_schedule_api, name="doctor_schedule_api"),
+    re_path(r"^doctor-attendance/$", views.doctor_attendance_api, name="doctor_attendance_api"),
     re_path(r"^doctors/(?P<pk>[0-9]+)/$", views.remove_doctor_api, name="remove_doctor_api"),
     re_path(r"^pathologists/$", views.add_pathologist_api, name="add_pathologist_api"),
     re_path(r"^pathologist-schedules/list/$", views.pathologist_schedule_list_api, name="pathologist_schedule_list_api"),
@@ -61,4 +62,10 @@ urlpatterns = [
 
     re_path(r"^hospital-admits/$", views.admit_patient_api, name="admit_patient_api"),
     re_path(r"^hospital-admits/(?P<pk>[0-9]+)/discharge/$", views.discharge_patient_api, name="discharge_patient_api"),
-]
+
+    re_path(r"^requisitions/$", views.requisition_list_create_api, name="requisition_list_create_api"),
+    re_path(r"^requisitions/pending/$", views.requisition_pending_api, name="requisition_pending_api"),
+    re_path(r"^requisitions/(?P<req_id>[0-9]+)/$", views.requisition_detail_api, name="requisition_detail_api"),
+    re_path(r"^requisitions/(?P<req_id>[0-9]+)/action/$", views.requisition_action_api, name="requisition_action_api"),
+    re_path(r"^requisitions/(?P<req_id>[0-9]+)/fulfill/$", views.requisition_fulfill_api, name="requisition_fulfill_api"),
+]

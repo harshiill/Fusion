@@ -14,6 +14,7 @@ from ..models import (
     Present_Stock,
     Required_medicine,
     Stock_entry,
+    InventoryRequisition,
 )
 
 
@@ -90,3 +91,16 @@ def get_schedule_for_appointment(doctor_id, date_str):
     if schedule is None:
         raise ScheduleNotFound("Schedule not found for selected doctor/day")
     return schedule
+
+
+def get_all_requisitions():
+    return InventoryRequisition.objects.select_related("originator", "approved_by").prefetch_related("items", "items__medicine_id").all().order_by("-created_at")
+
+def get_requisitions_for_staff(user):
+    return get_all_requisitions().filter(originator=user)
+
+def get_pending_requisitions():
+    return get_all_requisitions().filter(status=InventoryRequisition.STATUS_SUBMITTED)
+
+def get_requisition_by_id(req_id):
+    return get_all_requisitions().filter(id=req_id).first()

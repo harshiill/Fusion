@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from django.apps import apps
 from django.db import transaction
 
 from applications.globals.models import ExtraInfo
@@ -17,16 +18,25 @@ from ..models import (
     Present_Stock,
     Required_medicine,
     Stock_entry,
+    HealthCenterFeedback,
     medical_relief,
+    InventoryRequisition,
+    InventoryRequisitionItem,
 )
-
-
+from django.utils import timezone
 def ping_service():
     return True
 
 
 def _model_or_none(model_name):
-    return globals().get(model_name)
+    model = globals().get(model_name)
+    if model is not None:
+        return model
+
+    try:
+        return apps.get_model("health_center", model_name)
+    except Exception:
+        return None
 
 
 def reset_counter():
@@ -192,15 +202,15 @@ def cancel_appointment(pk):
 
 
 def create_complaint(user, complaint_text):
-    complaint_model = _model_or_none("Complaint")
+    complaint_model = _model_or_none("HealthCenterFeedback") or _model_or_none("Complaint")
     if complaint_model is None:
         raise LookupError("Complaint model not available in current schema")
     user_info = ExtraInfo.objects.get(user=user)
-    return complaint_model.objects.create(user_id=user_info, complaint=complaint_text, date=datetime.now())
+    return complaint_model.objects.create(user_id=user_info, complaint=complaint_text)
 
 
 def respond_complaint(complaint_id, feedback):
-    complaint_model = _model_or_none("Complaint")
+    complaint_model = _model_or_none("HealthCenterFeedback") or _model_or_none("Complaint")
     if complaint_model is None:
         raise LookupError("Complaint model not available in current schema")
     complaint_model.objects.filter(pk=complaint_id).update(feedback=feedback)
@@ -297,3 +307,49 @@ def add_prescribed_medicine(data):
 
 def create_medical_relief(description, uploaded_file):
     return medical_relief.objects.create(description=description, file=uploaded_file)
+
+
+def notify_requisition_status(req):
+    message = f"Your Inventory Requisition #{req.id} has been {req.status}."
+    healthcare_center_notif(sender=req.approved_by, recipient=req.originator, type='new_announce', message=message)
+
+@transaction.atomic
+def create_requisition(user, items_data, remarks=None):
+    req = InventoryRequisition.objects.create(originator=user, remarks=remarks)
+    for item_data in items_data:
+        InventoryRequisitionItem.objects.create(
+            requisition=req,
+            medicine_id=item_data["medicine_id"],
+            quantity=item_data["quantity"],
+            notes=item_data.get("notes", "")
+        )
+    return req
+
+@transaction.atomic
+def approve_or_reject_requisition(req, authority_user, status, remarks=None):
+    if req.status != InventoryRequisition.STATUS_SUBMITTED:
+        raise ValueError("Only submitted requisitions can be approved or rejected.")
+    req.status = status
+    if remarks is not None:
+        req.remarks = remarks
+    req.approved_by = authority_user
+    req.approved_at = timezone.now()
+    req.save(update_fields=["status", "remarks", "approved_by", "approved_at", "updated_at"])
+    
+    notify_requisition_status(req)
+    return req
+
+@transaction.atomic
+def fulfill_requisition(req, staff_user):
+    if req.status != InventoryRequisition.STATUS_APPROVED:
+        raise ValueError("Only approved requisitions can be fulfilled.")
+    req.status = InventoryRequisition.STATUS_FULFILLED
+    req.save(update_fields=["status", "updated_at"])
+    
+    # Update medicine quantities
+    for item in req.items.all():
+        medicine = item.medicine_id
+        medicine.quantity += item.quantity
+        medicine.save(update_fields=["quantity"])
+        
+    return req

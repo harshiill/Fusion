@@ -19,6 +19,7 @@ from .serializers import (
     AllMedicineSerializer,
     AllPrescribedMedicineSerializer,
     AllPrescriptionSerializer,
+    DoctorAttendanceSerializer,
     MedicalProfileSerializer,
     MedicalReliefWorkflowSerializer,
     AmbulanceRequestCreateSerializer,
@@ -62,7 +63,9 @@ from ..models import (
     All_Prescribed_medicine,
     All_Prescription,
     Doctor,
+    DoctorAttendance,
     Doctors_Schedule,
+    HealthCenterFeedback,
     Pathologist,
     Present_Stock,
     Required_medicine,
@@ -95,7 +98,8 @@ def get_designations(user):
 
 
 def ensure_compounder_access(request):
-    if "Compounder" not in get_designations(request.user):
+    designations = {str(value).strip().lower() for value in get_designations(request.user)}
+    if "compounder" not in designations:
         raise PermissionError("Compounder role required")
 
 
@@ -113,6 +117,14 @@ def _safe_int(value, default=None):
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _normalize_bool(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "present"}
 
 
 def _normalize_day_value(day_value):
@@ -269,6 +281,18 @@ def _store_binary_file(raw_base64):
     return uploaded.id
 
 
+def _resolve_health_center_template_path(filename):
+    app_static_path = Path(__file__).resolve().parents[1] / "static" / "health_center" / filename
+    if app_static_path.exists():
+        return app_static_path
+
+    project_static_path = Path(__file__).resolve().parents[3] / "static" / "health_center" / filename
+    if project_static_path.exists():
+        return project_static_path
+
+    return None
+
+
 def _serialize_workflow_relief(relief):
     status_value = str(relief.status or "").upper()
     is_forwarded = status_value in {
@@ -371,6 +395,7 @@ def _build_legacy_doctor_schedule(data):
     for doctor in data["doctors"]:
         result.append(
             {
+                "id": doctor.id,
                 "name": doctor.doctor_name,
                 "specialization": doctor.specialization,
                 "availability": schedule_by_doctor_id.get(doctor.id, []),
@@ -501,8 +526,25 @@ def _build_legacy_stock_report(stock_rows, page, search_text, response_key, page
 
 
 def _build_legacy_feedback_payload():
-    # Legacy complaint model may not exist in the current schema.
-    return {"complaints": []}
+    rows = HealthCenterFeedback.objects.select_related("user_id", "user_id__user").all().order_by("-date", "-id")
+    complaints = []
+
+    for row in rows:
+        username = "Unknown"
+        if getattr(row, "user_id", None) and getattr(row.user_id, "user", None):
+            username = row.user_id.user.username
+
+        complaints.append(
+            {
+                "id": row.id,
+                "user_id": username,
+                "complaint": row.complaint,
+                "feedback": row.feedback,
+                "date": row.date.isoformat() if row.date else "",
+            }
+        )
+
+    return {"complaints": complaints}
 
 
 def _build_legacy_relief_payload(username):
@@ -665,6 +707,576 @@ def _build_compounder_dashboard_payload():
         "prescriptions": AllPrescriptionSerializer(data["prescriptions"], many=True).data,
         "prescribed_medicines": AllPrescribedMedicineSerializer(data["prescribed_medicines"], many=True).data,
     }
+
+
+def _handle_legacy_compounder_management_payload(payload, data, request=None):
+    if _is_legacy_flag_set(payload, "mark_doctor_attendance"):
+        doctor = _resolve_doctor(payload.get("doctor_id") or payload.get("doctor") or payload.get("doctor_name"))
+        if not doctor:
+            return Response({"status": 0, "detail": "Doctor not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        attendance_date = payload.get("attendance_date")
+        try:
+            attendance_date = _normalize_date_value(attendance_date) if attendance_date else date.today()
+        except ValueError as exc:
+            return Response({"status": 0, "detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        is_present = _normalize_bool(payload.get("is_present"), default=False)
+        marked_by = ExtraInfo.objects.filter(user=request.user).first() if request else None
+
+        record, _ = DoctorAttendance.objects.update_or_create(
+            doctor_id=doctor,
+            attendance_date=attendance_date,
+            defaults={"is_present": is_present, "marked_by": marked_by},
+        )
+        return Response(
+            {
+                "status": 1,
+                "detail": "Attendance updated",
+                "attendance": DoctorAttendanceSerializer(record).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    if _is_legacy_flag_set(payload, "get_doctor_attendance"):
+        attendance_date = payload.get("attendance_date")
+        try:
+            attendance_date = _normalize_date_value(attendance_date) if attendance_date else date.today()
+        except ValueError as exc:
+            return Response({"status": 0, "detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        rows = DoctorAttendance.objects.select_related("doctor_id").filter(attendance_date=attendance_date)
+        attendance = {
+            row.doctor_id_id: {
+                "doctor_id": row.doctor_id_id,
+                "attendance_date": row.attendance_date,
+                "is_present": row.is_present,
+            }
+            for row in rows
+        }
+        return Response({"status": 1, "attendance": attendance}, status=status.HTTP_200_OK)
+
+    if _is_legacy_flag_set(payload, "add_doctor"):
+        doctor_payload = {
+            "doctor_name": (payload.get("new_doctor") or payload.get("doctor_name") or "").strip(),
+            "doctor_phone": str(payload.get("phone") or payload.get("doctor_phone") or "").strip(),
+            "specialization": (payload.get("specialization") or "").strip(),
+            "active": True,
+        }
+        serializer = DoctorSerializer(data=doctor_payload)
+        if not serializer.is_valid():
+            return Response({"status": 0, "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+        doctor = add_doctor(serializer.validated_data)
+        return Response({"status": 1, "doctor": DoctorSerializer(doctor).data}, status=status.HTTP_200_OK)
+
+    if _is_legacy_flag_set(payload, "remove_doctor"):
+        doctor = _resolve_doctor(payload.get("doctor_active") or payload.get("doctor_id"))
+        if not doctor:
+            return Response({"status": 0, "detail": "Doctor not found"}, status=status.HTTP_404_NOT_FOUND)
+        deactivate_doctor(doctor.id)
+        return Response({"status": 1, "detail": "Doctor removed"}, status=status.HTTP_200_OK)
+
+    if _is_legacy_flag_set(payload, "add_pathologist"):
+        pathologist_payload = {
+            "pathologist_name": (payload.get("new_pathologist") or payload.get("pathologist_name") or "").strip(),
+            "pathologist_phone": str(payload.get("phone") or payload.get("pathologist_phone") or "").strip(),
+            "specialization": (payload.get("specialization") or "").strip(),
+            "active": True,
+        }
+        serializer = PathologistSerializer(data=pathologist_payload)
+        if not serializer.is_valid():
+            return Response({"status": 0, "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+        pathologist = add_pathologist(serializer.validated_data)
+        return Response({"status": 1, "pathologist": PathologistSerializer(pathologist).data}, status=status.HTTP_200_OK)
+
+    if _is_legacy_flag_set(payload, "remove_pathologist"):
+        pathologist = _resolve_pathologist(payload.get("pathologist_active") or payload.get("pathologist_id"))
+        if not pathologist:
+            return Response({"status": 0, "detail": "Pathologist not found"}, status=status.HTTP_404_NOT_FOUND)
+        deactivate_pathologist(pathologist.id)
+        return Response({"status": 1, "detail": "Pathologist removed"}, status=status.HTTP_200_OK)
+
+    if _is_legacy_flag_set(payload, "edit_1"):
+        doctor = _resolve_doctor(payload.get("doctor"))
+        day = _normalize_day_value(payload.get("day"))
+        room = _safe_int(payload.get("room"), None)
+        if not doctor or day is None or room is None:
+            return Response({"status": 0, "detail": "Invalid doctor/day/room"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            from_time = _normalize_time_value(payload.get("time_in"))
+            to_time = _normalize_time_value(payload.get("time_out"))
+            schedule = upsert_doctor_schedule(doctor.id, day, from_time, to_time, room)
+        except Exception as exc:
+            return Response({"status": 0, "detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({"status": 1, "schedule": DoctorsScheduleSerializer(schedule).data}, status=status.HTTP_200_OK)
+
+    if _is_legacy_flag_set(payload, "rmv"):
+        doctor = _resolve_doctor(payload.get("doctor"))
+        day = _normalize_day_value(payload.get("day"))
+        if not doctor or day is None:
+            return Response({"status": 0, "detail": "Invalid doctor/day"}, status=status.HTTP_400_BAD_REQUEST)
+        delete_doctor_schedule(doctor.id, day)
+        return Response({"status": 1, "detail": "Schedule removed"}, status=status.HTTP_200_OK)
+
+    if _is_legacy_flag_set(payload, "edit12"):
+        pathologist = _resolve_pathologist(payload.get("pathologist"))
+        day = _normalize_day_value(payload.get("day"))
+        room = _safe_int(payload.get("room"), None)
+        if not pathologist or day is None or room is None:
+            return Response({"status": 0, "detail": "Invalid pathologist/day/room"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            from_time = _normalize_time_value(payload.get("time_in"))
+            to_time = _normalize_time_value(payload.get("time_out"))
+            schedule = upsert_pathologist_schedule(pathologist.id, day, from_time, to_time, room)
+        except Exception as exc:
+            return Response({"status": 0, "detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({"status": 1, "schedule": PathologistScheduleSerializer(schedule).data}, status=status.HTTP_200_OK)
+
+    if _is_legacy_flag_set(payload, "rmv1"):
+        pathologist = _resolve_pathologist(payload.get("pathologist"))
+        day = _normalize_day_value(payload.get("day"))
+        if not pathologist or day is None:
+            return Response({"status": 0, "detail": "Invalid pathologist/day"}, status=status.HTTP_400_BAD_REQUEST)
+        delete_pathologist_schedule(pathologist.id, day)
+        return Response({"status": 1, "detail": "Schedule removed"}, status=status.HTTP_200_OK)
+
+    if _is_legacy_flag_set(payload, "get_stock"):
+        raw_search = payload.get("medicine_name_for_stock")
+        selected_medicine_id = _extract_trailing_id(raw_search)
+        search_text = str(raw_search or "").split(",")[0].strip()
+
+        query = All_Medicine.objects.all()
+        if selected_medicine_id is not None:
+            query = query.filter(id=selected_medicine_id)
+        elif search_text:
+            query = query.filter(brand_name__icontains=search_text)
+
+        similar_rows = list(
+            query.order_by("brand_name")[:20].values(
+                "id",
+                "medicine_name",
+                "brand_name",
+                "constituents",
+                "manufacturer_name",
+                "threshold",
+                "pack_size_label",
+            )
+        )
+
+        stock_rows = []
+        if selected_medicine_id is None and len(similar_rows) == 1:
+            selected_medicine_id = similar_rows[0]["id"]
+
+        if selected_medicine_id is not None:
+            for stock in Present_Stock.objects.select_related("medicine_id").filter(
+                medicine_id_id=selected_medicine_id,
+                quantity__gt=0,
+                Expiry_date__gte=date.today(),
+            ).order_by("Expiry_date"):
+                stock_rows.append(
+                    {
+                        "id": stock.id,
+                        "brand_name": stock.medicine_id.brand_name if stock.medicine_id else "N/A",
+                        "quantity": stock.quantity,
+                        "expiry": stock.Expiry_date,
+                    }
+                )
+
+        return Response({"sim": similar_rows, "val": stock_rows}, status=status.HTTP_200_OK)
+
+    if _is_legacy_flag_set(payload, "get_patients"):
+        patients = []
+        for row in (
+            ExtraInfo.objects.select_related("user")
+            .filter(user_type="student", user__isnull=False)
+            .order_by("user__username")[:200]
+        ):
+            username = row.user.username if row.user else ""
+            if not username:
+                continue
+            patients.append(
+                {
+                    "id": row.id,
+                    "username": username,
+                    "name": row.user.get_full_name() if row.user else username,
+                }
+            )
+
+        return Response({"status": 1, "patients": patients}, status=status.HTTP_200_OK)
+
+    if _is_legacy_flag_set(payload, "add_medicine"):
+        medicine_payload = {
+            "medicine_name": (payload.get("new_medicine") or payload.get("medicine_name") or payload.get("brand_name") or "").strip(),
+            "brand_name": (payload.get("brand_name") or payload.get("new_medicine") or "").strip(),
+            "constituents": (payload.get("constituents") or "").strip(),
+            "manufacturer_name": (payload.get("manufacture_name") or payload.get("manufacturer_name") or "").strip(),
+            "threshold": _safe_int(payload.get("threshold"), 0) or 0,
+            "pack_size_label": str(payload.get("packsize") or payload.get("pack_size_label") or "").strip(),
+        }
+        serializer = AllMedicineSerializer(data=medicine_payload)
+        if not serializer.is_valid():
+            return Response({"status": 0, "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+        medicine = add_medicine(serializer.validated_data)
+        return Response({"status": 1, "medicine": AllMedicineSerializer(medicine).data}, status=status.HTTP_200_OK)
+
+    if _is_legacy_flag_set(payload, "add_medicine_excel"):
+        rows = _read_excel_rows(payload.get("file_data"))
+        if not rows:
+            return Response(
+                {
+                    "status": 0,
+                    "detail": "No readable rows found in uploaded file. Use the sample template and ensure it is a valid .xlsx file.",
+                    "created": 0,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        created_count = 0
+        skipped_count = 0
+        for row in rows:
+            brand_name = _pick_row_value(row, ["brand_name", "brand", "brandname", "medicine_brand"], "")
+            if not brand_name:
+                skipped_count += 1
+                continue
+
+            defaults = {
+                "medicine_name": _pick_row_value(row, ["medicine_name", "medicine", "name"], brand_name),
+                "constituents": _pick_row_value(row, ["constituents", "composition"], ""),
+                "manufacturer_name": _pick_row_value(row, ["manufacturer_name", "manufacture_name", "manufacturer"], ""),
+                "threshold": _safe_int(_pick_row_value(row, ["threshold", "min_stock"], 0), 0) or 0,
+                "pack_size_label": str(_pick_row_value(row, ["pack_size_label", "packsize", "pack_size"], "")),
+            }
+            _, created = All_Medicine.objects.get_or_create(brand_name=str(brand_name).strip(), defaults=defaults)
+            if created:
+                created_count += 1
+            else:
+                skipped_count += 1
+
+        return Response(
+            {
+                "status": 1 if created_count > 0 else 0,
+                "detail": "Medicine upload processed",
+                "created": created_count,
+                "skipped": skipped_count,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    if _is_legacy_flag_set(payload, "add_stock"):
+        medicine_id = _safe_int(payload.get("medicine_id"), None)
+        quantity = _safe_int(payload.get("quantity"), None)
+        expiry_date = payload.get("expiry_date") or payload.get("Expiry_date")
+        supplier = str(payload.get("supplier") or "NOT_SET").strip() or "NOT_SET"
+
+        if medicine_id is None or quantity is None or quantity <= 0:
+            return Response({"status": 0, "detail": "Invalid medicine or quantity"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            expiry_obj = _normalize_date_value(expiry_date)
+            if expiry_obj is None:
+                raise ValueError("Expiry date is required")
+        except ValueError as exc:
+            return Response({"status": 0, "detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            stock_entry, _ = add_stock(medicine_id, quantity, supplier, expiry_obj)
+        except Exception as exc:
+            return Response({"status": 0, "detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({"status": 1, "stock_id": stock_entry.id}, status=status.HTTP_200_OK)
+
+    if _is_legacy_flag_set(payload, "add_stock_excel"):
+        rows = _read_excel_rows(payload.get("file_data"))
+        if not rows:
+            return Response(
+                {
+                    "status": 0,
+                    "detail": "No readable rows found in uploaded file. Use the sample template and ensure it is a valid .xlsx file.",
+                    "created": 0,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        created_count = 0
+        skipped_count = 0
+
+        for row in rows:
+            medicine_id = _safe_int(_pick_row_value(row, ["medicine_id", "id"], None), None)
+            brand_name = _pick_row_value(row, ["brand_name", "brand", "medicine"], "")
+            quantity = _safe_int(_pick_row_value(row, ["quantity", "qty"], 0), 0) or 0
+            supplier = str(_pick_row_value(row, ["supplier", "vendor"], "NOT_SET"))
+            expiry_raw = _pick_row_value(row, ["expiry_date", "expiry", "expiry_date_yyyy-mm-dd"], None)
+
+            medicine = All_Medicine.objects.filter(id=medicine_id).first() if medicine_id else None
+            if medicine is None and brand_name:
+                medicine = All_Medicine.objects.filter(brand_name__iexact=str(brand_name).strip()).first()
+            if medicine is None or quantity <= 0:
+                skipped_count += 1
+                continue
+
+            try:
+                expiry_date = _normalize_date_value(expiry_raw)
+                if expiry_date is None:
+                    skipped_count += 1
+                    continue
+            except ValueError:
+                skipped_count += 1
+                continue
+
+            add_stock(medicine.id, quantity, supplier, expiry_date)
+            created_count += 1
+
+        return Response(
+            {
+                "status": 1 if created_count > 0 else 0,
+                "detail": "Stock upload processed",
+                "created": created_count,
+                "skipped": skipped_count,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    if _is_legacy_flag_set(payload, "edit_threshold"):
+        medicine_id = _safe_int(payload.get("medicine_id"), None)
+        threshold = _safe_int(payload.get("threshold"), None)
+        if medicine_id is None or threshold is None:
+            return Response({"status": 0, "detail": "Invalid medicine or threshold"}, status=status.HTTP_400_BAD_REQUEST)
+
+        medicine = All_Medicine.objects.filter(id=medicine_id).first()
+        if medicine is None:
+            return Response({"status": 0, "detail": "Medicine not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        medicine.threshold = threshold
+        medicine.save(update_fields=["threshold"])
+        return Response({"status": 1, "detail": "Threshold updated"}, status=status.HTTP_200_OK)
+
+    if _is_legacy_flag_set(payload, "get_file"):
+        file_id = _safe_int(payload.get("file_id"), None)
+        if file_id == -2:
+            path = _resolve_health_center_template_path("add_stock_example.xlsx")
+            if path is None:
+                return Response({"detail": "Template not found"}, status=status.HTTP_404_NOT_FOUND)
+            return FileResponse(open(path, "rb"), as_attachment=True, filename="example_add_stock.xlsx")
+
+        if file_id == -1:
+            path = _resolve_health_center_template_path("add_medicine_example.xlsx")
+            if path is None:
+                return Response({"detail": "Template not found"}, status=status.HTTP_404_NOT_FOUND)
+            return FileResponse(open(path, "rb"), as_attachment=True, filename="example_add_medicine.xlsx")
+
+        if file_id is None or file_id <= 0:
+            return Response({"detail": "Invalid file id"}, status=status.HTTP_400_BAD_REQUEST)
+
+        file_row = files.objects.filter(id=file_id).first()
+        if file_row is None:
+            return Response({"detail": "File not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        response = HttpResponse(file_row.file_data, content_type="application/pdf")
+        response["Content-Disposition"] = 'inline; filename="generated.pdf"'
+        return response
+
+    if payload.get("user_for_dependents") is not None:
+        username = str(payload.get("user_for_dependents") or "").strip()
+        extra_info = ExtraInfo.objects.select_related("user").filter(user__username=username).first()
+        if not extra_info:
+            return Response({"status": -1, "dep": []}, status=status.HTTP_200_OK)
+
+        dependents = EmpDependents.objects.filter(extra_info=extra_info)
+        dep_payload = [{"name": dep.name, "relation": dep.relationship} for dep in dependents]
+        return Response({"status": 1, "dep": dep_payload}, status=status.HTTP_200_OK)
+
+    if _is_legacy_flag_set(payload, "prescribe_b"):
+        patient_username = str(payload.get("user") or "").strip()
+        if not patient_username or not User.objects.filter(username=patient_username).exists():
+            return Response({"status": -1, "detail": "No patient found"}, status=status.HTTP_200_OK)
+
+        doctor = _resolve_doctor(payload.get("doctor"))
+        if doctor is None:
+            return Response({"status": 0, "detail": "Invalid doctor"}, status=status.HTTP_400_BAD_REQUEST)
+
+        is_dependent = str(payload.get("is_dependent") or "self").lower() == "dependent"
+        dependent_name = str(payload.get("dependent_name") or "SELF").strip() or "SELF"
+        dependent_relation = str(payload.get("dependent_relation") or "SELF").strip() or "SELF"
+        file_id = _store_binary_file(payload.get("file"))
+        medicines = payload.get("pre_medicine") or []
+
+        try:
+            with transaction.atomic():
+                prescription = All_Prescription.objects.create(
+                    user_id=patient_username,
+                    doctor_id=doctor,
+                    details=str(payload.get("details") or "").strip(),
+                    date=date.today(),
+                    suggestions="",
+                    test=str(payload.get("tests") or "").strip(),
+                    file_id=file_id,
+                    is_dependent=is_dependent,
+                    dependent_name=dependent_name if is_dependent else "SELF",
+                    dependent_relation=dependent_relation if is_dependent else "SELF",
+                )
+
+                for item in medicines:
+                    medicine = _resolve_medicine(item.get("brand_name") or item.get("astock"))
+                    quantity = _safe_int(item.get("quantity"), 0) or 0
+                    if medicine is None or quantity <= 0:
+                        continue
+
+                    result = prescribe_medicine(medicine.id, quantity, prescription.id)
+                    if not result.get("success"):
+                        raise ValueError(result.get("message") or "Medicine prescription failed")
+
+                    prescribed = result.get("prescribed_medicine")
+                    if prescribed:
+                        prescribed.days = _safe_int(item.get("Days"), 0) or 0
+                        prescribed.times = _safe_int(item.get("Times"), 0) or 0
+                        prescribed.save(update_fields=["days", "times"])
+        except Exception as exc:
+            return Response({"status": 0, "detail": str(exc)}, status=status.HTTP_200_OK)
+
+        return Response({"status": 1, "detail": "Prescription created"}, status=status.HTTP_200_OK)
+
+    if _is_legacy_flag_set(payload, "presc_followup"):
+        base_prescription_id = _safe_int(payload.get("pre_id"), None)
+        base_prescription = All_Prescription.objects.filter(id=base_prescription_id).first()
+        if base_prescription is None:
+            return Response({"status": 0, "detail": "Prescription not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        doctor = _resolve_doctor(payload.get("doctor"))
+        if doctor is None:
+            return Response({"status": 0, "detail": "Invalid doctor"}, status=status.HTTP_400_BAD_REQUEST)
+
+        file_id = _store_binary_file(payload.get("file"))
+        revoke_ids = payload.get("revoked") or []
+        if isinstance(revoke_ids, str):
+            revoke_ids = [revoke_ids]
+        medicines = payload.get("pre_medicine") or []
+
+        try:
+            with transaction.atomic():
+                followup = All_Prescription.objects.create(
+                    user_id=base_prescription.user_id,
+                    doctor_id=doctor,
+                    details=str(payload.get("details") or "").strip(),
+                    date=date.today(),
+                    suggestions="",
+                    test=str(payload.get("tests") or "").strip(),
+                    file_id=file_id,
+                    is_dependent=base_prescription.is_dependent,
+                    dependent_name=base_prescription.dependent_name,
+                    dependent_relation=base_prescription.dependent_relation,
+                    follow_up_of=base_prescription.follow_up_of or base_prescription,
+                )
+
+                for revoke_id in revoke_ids:
+                    med_id = _safe_int(revoke_id, None)
+                    if med_id is None:
+                        continue
+                    med_row = All_Prescribed_medicine.objects.filter(id=med_id).first()
+                    if med_row:
+                        med_row.revoked = True
+                        med_row.revoked_date = date.today()
+                        med_row.revoked_prescription = followup
+                        med_row.save(update_fields=["revoked", "revoked_date", "revoked_prescription"])
+
+                for item in medicines:
+                    medicine = _resolve_medicine(item.get("brand_name") or item.get("astock"))
+                    quantity = _safe_int(item.get("quantity"), 0) or 0
+                    if medicine is None or quantity <= 0:
+                        continue
+
+                    result = prescribe_medicine(medicine.id, quantity, followup.id)
+                    if not result.get("success"):
+                        raise ValueError(result.get("message") or "Follow-up medicine prescription failed")
+
+                    prescribed = result.get("prescribed_medicine")
+                    if prescribed:
+                        prescribed.days = _safe_int(item.get("Days"), 0) or 0
+                        prescribed.times = _safe_int(item.get("Times"), 0) or 0
+                        prescribed.save(update_fields=["days", "times"])
+        except Exception as exc:
+            return Response({"status": 0, "detail": str(exc)}, status=status.HTTP_200_OK)
+
+        return Response({"status": 1, "detail": "Follow-up created"}, status=status.HTTP_200_OK)
+
+    if payload.get("datatype") == "manage_required_view":
+        page = payload.get("page_required_view", 1)
+        try:
+            page = int(page)
+        except (TypeError, ValueError):
+            page = 1
+
+        required_rows = list(Required_medicine.objects.select_related("medicine_id").all().order_by("medicine_id__brand_name"))
+        query = str(payload.get("search_view_required") or "").strip().lower()
+        if query:
+            required_rows = [
+                row for row in required_rows if query in str(row.medicine_id.brand_name if row.medicine_id else "").lower()
+            ]
+
+        page_size = 10
+        total_pages = max(1, (len(required_rows) + page_size - 1) // page_size)
+        page = max(1, min(page, total_pages))
+        start = (page - 1) * page_size
+        end = start + page_size
+
+        report = []
+        for row in required_rows[start:end]:
+            report.append(
+                {
+                    "id": row.id,
+                    "medicine_id": row.medicine_id.brand_name if row.medicine_id else "N/A",
+                    "quantity": row.quantity,
+                    "threshold": row.threshold,
+                }
+            )
+
+        return Response(
+            {
+                "report_required": report,
+                "total_pages_required": total_pages,
+                "page_required_view": page,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    if payload.get("datatype") == "manage_prescriptions_view":
+        page = _safe_int(payload.get("page_prescriptions"), 1) or 1
+        return Response(
+            _build_legacy_prescription_list(
+                data["prescriptions"],
+                page=page,
+                search_text=payload.get("search_prescriptions", ""),
+            ),
+            status=status.HTTP_200_OK,
+        )
+
+    if payload.get("datatype") == "manage_patient_view":
+        page = _safe_int(payload.get("page_patient"), 1) or 1
+        patient_user = str(payload.get("user_id") or "").strip()
+        prescriptions = [row for row in data["prescriptions"] if not patient_user or str(row.user_id) == patient_user]
+        return Response(
+            _build_legacy_prescription_list(
+                prescriptions,
+                page=page,
+                search_text=payload.get("search_patient", ""),
+                response_key="report_patient",
+                pages_key="total_pages_patient",
+            ),
+            status=status.HTTP_200_OK,
+        )
+
+    if _is_legacy_flag_set(payload, "get_prescription"):
+        presc_id = payload.get("presc_id")
+        try:
+            presc_id = int(presc_id)
+        except (TypeError, ValueError):
+            presc_id = -1
+        return Response(_build_legacy_prescription_detail(data, presc_id), status=status.HTTP_200_OK)
+
+    return None
 
 
 @api_view(["GET", "POST"])
@@ -932,14 +1544,14 @@ def student_legacy_api(request):
         if _is_legacy_flag_set(payload, "get_file"):
             file_id = _safe_int(payload.get("file_id"), None)
             if file_id == -2:
-                path = Path(__file__).resolve().parents[3] / "static" / "health_center" / "add_stock_example.xlsx"
-                if not path.exists():
+                path = _resolve_health_center_template_path("add_stock_example.xlsx")
+                if path is None:
                     return Response({"detail": "Template not found"}, status=status.HTTP_404_NOT_FOUND)
                 return FileResponse(open(path, "rb"), as_attachment=True, filename="example_add_stock.xlsx")
 
             if file_id == -1:
-                path = Path(__file__).resolve().parents[3] / "static" / "health_center" / "add_medicine_example.xlsx"
-                if not path.exists():
+                path = _resolve_health_center_template_path("add_medicine_example.xlsx")
+                if path is None:
                     return Response({"detail": "Template not found"}, status=status.HTTP_404_NOT_FOUND)
                 return FileResponse(open(path, "rb"), as_attachment=True, filename="example_add_medicine.xlsx")
 
@@ -1220,9 +1832,9 @@ def student_legacy_api(request):
 
             try:
                 create_complaint(request.user, feedback)
-            except Exception:
-                # Complaint model is optional in current schema; keep backward-compatible success.
-                logger.info("Complaint model unavailable; accepted feedback without persistence")
+            except Exception as exc:
+                logger.exception("Feedback submission failed")
+                return Response({"status": 0, "detail": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
             return Response({"status": 1, "detail": "Feedback submitted"}, status=status.HTTP_200_OK)
 
@@ -1245,6 +1857,10 @@ def compounder_legacy_api(request):
     data = get_compounder_dashboard_data()
     if request.method == "POST":
         payload = request.data or {}
+
+        managed_response = _handle_legacy_compounder_management_payload(payload, data, request=request)
+        if managed_response is not None:
+            return managed_response
 
         if _is_legacy_flag_set(payload, "get_doctor_schedule"):
             return Response({"schedule": _build_legacy_doctor_schedule(data)}, status=status.HTTP_200_OK)
@@ -1718,6 +2334,43 @@ def doctor_schedule_api(request, doctor_id):
     return Response(DoctorsScheduleSerializer(schedules, many=True).data, status=status.HTTP_200_OK)
 
 
+@api_view(["GET", "POST"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def doctor_attendance_api(request):
+    if request.method == "GET":
+        attendance_date_raw = request.query_params.get("date")
+        try:
+            attendance_date = _normalize_date_value(attendance_date_raw) if attendance_date_raw else date.today()
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        rows = DoctorAttendance.objects.select_related("doctor_id").filter(attendance_date=attendance_date)
+        return Response(DoctorAttendanceSerializer(rows, many=True).data, status=status.HTTP_200_OK)
+
+    ensure_compounder_access(request)
+    payload = request.data
+    doctor = _resolve_doctor(payload.get("doctor_id") or payload.get("doctor") or payload.get("doctor_name"))
+    if not doctor:
+        return Response({"detail": "Doctor not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    attendance_date_raw = payload.get("attendance_date")
+    try:
+        attendance_date = _normalize_date_value(attendance_date_raw) if attendance_date_raw else date.today()
+    except ValueError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    is_present = _normalize_bool(payload.get("is_present"), default=False)
+    marked_by = ExtraInfo.objects.filter(user=request.user).first()
+
+    row, _ = DoctorAttendance.objects.update_or_create(
+        doctor_id=doctor,
+        attendance_date=attendance_date,
+        defaults={"is_present": is_present, "marked_by": marked_by},
+    )
+    return Response(DoctorAttendanceSerializer(row).data, status=status.HTTP_200_OK)
+
+
 @api_view(["GET"])
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
@@ -1887,3 +2540,83 @@ def discharge_patient_api(request, pk):
     if hospital_admit_model is None:
         raise Http404("Hospital admit flow is not available in current schema")
     return Response({"detail": "Not yet implemented for active schema"}, status=status.HTTP_501_NOT_IMPLEMENTED)
+
+
+from .selectors import get_all_requisitions, get_requisitions_for_staff, get_pending_requisitions, get_requisition_by_id
+from .services import create_requisition, approve_or_reject_requisition, fulfill_requisition
+from .serializers import InventoryRequisitionSerializer, InventoryRequisitionActionSerializer
+from rest_framework.exceptions import PermissionDenied
+
+def ensure_approving_authority_access(request):
+    designations = get_designations_for_user(request.user)
+    if "phc_admin" not in designations and "compounder" not in designations:
+        raise PermissionDenied("User does not have Approving Authority access.")
+
+@api_view(["GET", "POST"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def requisition_list_create_api(request):
+    ensure_compounder_access(request)
+    if request.method == "GET":
+        qs = get_requisitions_for_staff(request.user)
+        return Response(InventoryRequisitionSerializer(qs, many=True).data, status=status.HTTP_200_OK)
+    
+    items_data = request.data.get("items", [])
+    remarks = request.data.get("remarks", "")
+    req = create_requisition(request.user, items_data, remarks)
+    return Response(InventoryRequisitionSerializer(req).data, status=status.HTTP_201_CREATED)
+
+@api_view(["GET"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def requisition_detail_api(request, req_id):
+    req = get_requisition_by_id(req_id)
+    if not req:
+        return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+    return Response(InventoryRequisitionSerializer(req).data, status=status.HTTP_200_OK)
+
+@api_view(["GET"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def requisition_pending_api(request):
+    ensure_approving_authority_access(request)
+    qs = get_pending_requisitions()
+    return Response(InventoryRequisitionSerializer(qs, many=True).data, status=status.HTTP_200_OK)
+
+@api_view(["PATCH", "POST"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def requisition_action_api(request, req_id):
+    ensure_approving_authority_access(request)
+    req = get_requisition_by_id(req_id)
+    if not req:
+        return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    serializer = InventoryRequisitionActionSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    
+    try:
+        updated_req = approve_or_reject_requisition(
+            req=req,
+            authority_user=request.user,
+            status=serializer.validated_data["status"],
+            remarks=serializer.validated_data.get("remarks")
+        )
+        return Response(InventoryRequisitionSerializer(updated_req).data, status=status.HTTP_200_OK)
+    except ValueError as e:
+        return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(["PATCH", "POST"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def requisition_fulfill_api(request, req_id):
+    ensure_compounder_access(request)
+    req = get_requisition_by_id(req_id)
+    if not req:
+        return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    try:
+        updated_req = fulfill_requisition(req, request.user)
+        return Response(InventoryRequisitionSerializer(updated_req).data, status=status.HTTP_200_OK)
+    except ValueError as e:
+        return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)

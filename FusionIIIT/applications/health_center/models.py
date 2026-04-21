@@ -43,11 +43,18 @@ class Pathologist(models.Model):
     def __str__(self):
         return self.pathologist_name
 
-# class Complaint(models.Model):
-#     user_id = models.ForeignKey(ExtraInfo,on_delete=models.CASCADE)
-#     feedback = models.CharField(max_length=100, null=True, blank=False)                          #This is the feedback given by the compounder
-#     complaint = models.CharField(max_length=100, null=True, blank=False)                         #Here Complaint given by user cannot be NULL!
-#     date = models.DateField(auto_now=True)
+class HealthCenterFeedback(models.Model):
+    user_id = models.ForeignKey(ExtraInfo, on_delete=models.CASCADE)
+    complaint = models.TextField()
+    feedback = models.TextField(blank=True, default="")
+    date = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-date", "-id"]
+
+    def __str__(self):
+        username = getattr(getattr(self.user_id, "user", None), "username", "unknown")
+        return f"{username}: {self.complaint[:40]}"
 
 class All_Medicine(models.Model):
     medicine_name = models.CharField(max_length=1000,default="NOT_SET", null=True)
@@ -97,6 +104,27 @@ class Doctors_Schedule(models.Model):
     to_time = models.TimeField(null=True,blank=True)
     room = models.IntegerField()
     date = models.DateField(auto_now=True)
+
+
+class DoctorAttendance(models.Model):
+    doctor_id = models.ForeignKey(Doctor, on_delete=models.CASCADE)
+    attendance_date = models.DateField(default=date.today)
+    is_present = models.BooleanField(default=False)
+    marked_by = models.ForeignKey(
+        ExtraInfo,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="marked_doctor_attendance",
+    )
+    marked_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("doctor_id", "attendance_date")
+
+    def __str__(self):
+        status = "Present" if self.is_present else "Absent"
+        return f"{self.doctor_id.doctor_name} {self.attendance_date} {status}"
     
 class Pathologist_Schedule(models.Model):
     # doctor_id = models.ForeignKey(Doctor,on_delete=models.CASCADE)
@@ -237,3 +265,43 @@ class MedicalProfile(models.Model):
     chronic_conditions = models.TextField(null=True, blank=True)
     emergency_contact = models.CharField(max_length=20, null=True, blank=True)
 
+
+class InventoryRequisition(models.Model):
+    STATUS_SUBMITTED = "Submitted"
+    STATUS_APPROVED = "Approved"
+    STATUS_REJECTED = "Rejected"
+    STATUS_FULFILLED = "Fulfilled"
+
+    STATUS_CHOICES = (
+        (STATUS_SUBMITTED, "Submitted"),
+        (STATUS_APPROVED, "Approved"),
+        (STATUS_REJECTED, "Rejected"),
+        (STATUS_FULFILLED, "Fulfilled"),
+    )
+
+    originator = models.ForeignKey(User, on_delete=models.CASCADE, related_name="inventory_requisitions")
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default=STATUS_SUBMITTED)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    remarks = models.TextField(blank=True, null=True)
+    approved_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="approved_requisitions",
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"Requisition #{self.id} - {self.status}"
+
+
+class InventoryRequisitionItem(models.Model):
+    requisition = models.ForeignKey(InventoryRequisition, on_delete=models.CASCADE, related_name="items")
+    medicine_id = models.ForeignKey(All_Medicine, on_delete=models.CASCADE)
+    quantity = models.PositiveIntegerField()
+    notes = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.quantity} x {self.medicine_id}"
